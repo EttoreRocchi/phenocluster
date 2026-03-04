@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phenocluster"
+description = "Clinical Phenotype Discovery using Latent Class / Profile Analysis with Automatic Model Selection"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Ettore Rocchi", email = "ettore.rocchi3@unibo.it"}
+]
+maintainers = [
+    {name = "Ettore Rocchi", email = "ettore.rocchi3@unibo.it"}
+]
+keywords = [
+    "clinical",
+    "phenotype",
+    "clustering",
+    "latent-class-analysis",
+    "latent-profile-analysis",
+    "machine-learning",
+    "bioinformatics",
+    "healthcare",
+    "data-science"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Operating System :: OS Independent",
+]
+
+dynamic = ["version", "dependencies"]
+
+[project.scripts]
+phenocluster = "phenocluster.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-click>=5.0",
+    "furo",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "phenocluster.__version__"}
+dependencies = {file = ["requirements.txt"]}
+
+[project.urls]
+Homepage = "https://github.com/EttoreRocchi/PhenoCluster"
+Documentation = "https://ettorerocchi.github.io/PhenoCluster"
+Repository = "https://github.com/EttoreRocchi/PhenoCluster"
+"Bug Tracker" = "https://github.com/EttoreRocchi/PhenoCluster/issues"
+Changelog = "https://github.com/EttoreRocchi/PhenoCluster/blob/main/docs/changelog.rst"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["phenocluster*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"phenocluster/pipeline.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
