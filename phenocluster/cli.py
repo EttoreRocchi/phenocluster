@@ -519,12 +519,12 @@ def version():
     content.append("\n")
     content.append(
         "Click here for the GitHub repository",
-        style="dim cyan link https://github.com/EttoreRocchi/PhenoCluster",
+        style="dim cyan link https://github.com/EttoreRocchi/phenocluster",
     )
     content.append("\n")
     content.append(
         "Click here for the documentation",
-        style="dim cyan link https://ettorerocchi.github.io/PhenoCluster",
+        style="dim cyan link https://ettorerocchi.github.io/phenocluster",
     )
     content.append("\n")
     console.print(Panel(content, border_style="cyan", padding=(0, 4), width=min(80, console.width)))

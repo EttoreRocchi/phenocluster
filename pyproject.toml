@@ -60,11 +60,11 @@ version = {attr = "phenocluster.__version__"}
 dependencies = {file = ["requirements.txt"]}
 
 [project.urls]
-Homepage = "https://github.com/EttoreRocchi/PhenoCluster"
-Documentation = "https://ettorerocchi.github.io/PhenoCluster"
-Repository = "https://github.com/EttoreRocchi/PhenoCluster"
-"Bug Tracker" = "https://github.com/EttoreRocchi/PhenoCluster/issues"
-Changelog = "https://github.com/EttoreRocchi/PhenoCluster/blob/main/docs/changelog.rst"
+Homepage = "https://github.com/EttoreRocchi/phenocluster"
+Documentation = "https://ettorerocchi.github.io/phenocluster"
+Repository = "https://github.com/EttoreRocchi/phenocluster"
+"Bug Tracker" = "https://github.com/EttoreRocchi/phenocluster/issues"
+Changelog = "https://github.com/EttoreRocchi/phenocluster/blob/main/docs/changelog.rst"
 
 [tool.setuptools.packages.find]
 where = ["."]

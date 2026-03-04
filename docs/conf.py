@@ -26,7 +26,7 @@ html_title = "PhenoCluster"
 
 html_theme_options = {
     "sidebar_hide_name": True,
-    "source_repository": "https://github.com/EttoreRocchi/PhenoCluster",
+    "source_repository": "https://github.com/EttoreRocchi/phenocluster",
     "source_branch": "main",
     "source_directory": "docs/",
 }

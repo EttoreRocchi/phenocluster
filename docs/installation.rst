@@ -19,8 +19,8 @@ From source
 
 .. code-block:: bash
 
-   git clone https://github.com/EttoreRocchi/PhenoCluster.git
-   cd PhenoCluster
+   git clone https://github.com/EttoreRocchi/phenocluster.git
+   cd phenocluster
    pip install -e ".[dev]"
 
 This installs PhenoCluster in editable mode along with development dependencies

@@ -9,8 +9,8 @@
 [![PyPI version](https://img.shields.io/pypi/v/phenocluster)](https://pypi.org/project/phenocluster/)
 [![Python versions](https://img.shields.io/pypi/pyversions/phenocluster)](https://www.python.org/downloads/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/EttoreRocchi/PhenoCluster/actions/workflows/ci.yml/badge.svg)](https://github.com/EttoreRocchi/PhenoCluster/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://ettorerocchi.github.io/PhenoCluster)
+[![CI](https://github.com/EttoreRocchi/phenocluster/actions/workflows/ci.yml/badge.svg)](https://github.com/EttoreRocchi/phenocluster/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://ettorerocchi.github.io/phenocluster)
 
 ---
 
@@ -43,8 +43,8 @@ pip install phenocluster
 ### From source
 
 ```bash
-git clone https://github.com/EttoreRocchi/PhenoCluster.git
-cd PhenoCluster
+git clone https://github.com/EttoreRocchi/phenocluster.git
+cd phenocluster
 pip install -e ".[dev]"
 ```
 
@@ -158,11 +158,11 @@ Profiles set sensible defaults for common use-cases. Generate one with `phenoclu
 
 ## Configuration reference
 
-See the full [Configuration Reference](https://ettorerocchi.github.io/PhenoCluster/configuration.html) in the documentation.
+See the full [Configuration Reference](https://ettorerocchi.github.io/phenocluster/configuration.html) in the documentation.
 
 ## Documentation
 
-Full documentation (statistical methods, configuration reference, output descriptions) is available at **[ettorerocchi.github.io/PhenoCluster](https://ettorerocchi.github.io/PhenoCluster)**.
+Full documentation (statistical methods, configuration reference, output descriptions) is available at **[ettorerocchi.github.io/phenocluster](https://ettorerocchi.github.io/phenocluster)**.
 
 ## Testing
 
