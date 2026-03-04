@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 import joblib
 import numpy as np
@@ -26,9 +26,15 @@ def _numpy_encoder(obj):
     return str(obj)
 
 
-def save_pipeline_results(results, config, preprocessor, feature_selector,
-                          reference_phenotype, logger,
-                          output_dir: Optional[str] = None) -> None:
+def save_pipeline_results(
+    results,
+    config,
+    preprocessor,
+    feature_selector,
+    reference_phenotype,
+    logger,
+    output_dir: Optional[str] = None,
+) -> None:
     """Save pipeline results to disk."""
     if not results:
         logger.warning("No results to save. Run fit() first.")
@@ -122,9 +128,7 @@ def _save_json_results(results, results_dir, reference_phenotype, logger):
 
     # External validation (exclude plot objects)
     if "external_validation_results" in results and results["external_validation_results"]:
-        ext_data = {
-            k: v for k, v in results["external_validation_results"].items() if k != "plots"
-        }
+        ext_data = {k: v for k, v in results["external_validation_results"].items() if k != "plots"}
         with open(results_dir / "external_validation_results.json", "w") as f:
             json.dump(ext_data, f, indent=2, default=_numpy_encoder)
         logger.info("  Saved results/external_validation_results.json")
@@ -159,15 +163,15 @@ def _save_model_selection(results, data_dir, results_dir, logger):
             sign = -1.0 if criterion_name.upper() in _ic else 1.0
             all_results = []
             for _, row in comparison_table.iterrows():
-                all_results.append({
-                    "n_clusters": int(row["n_clusters"]),
-                    "mean_score": float(row["mean_score"]) * sign,
-                    "std_score": abs(float(row["std_score"])),
-                    "rank": int(row["rank"]),
-                })
-            pd.DataFrame(all_results).to_csv(
-                data_dir / "model_selection_results.csv", index=False
-            )
+                all_results.append(
+                    {
+                        "n_clusters": int(row["n_clusters"]),
+                        "mean_score": float(row["mean_score"]) * sign,
+                        "std_score": abs(float(row["std_score"])),
+                        "rank": int(row["rank"]),
+                    }
+                )
+            pd.DataFrame(all_results).to_csv(data_dir / "model_selection_results.csv", index=False)
             logger.info("  Saved data/model_selection_results.csv")
 
     with open(results_dir / "model_selection_summary.json", "w") as f:
@@ -227,6 +231,7 @@ def _generate_report(output_path, config, logger):
     """Generate HTML report."""
     try:
         from ..utils.report import generate_html_report
+
         generate_html_report(
             results_dir=output_path,
             title=f"{config.project_name} Analysis Report",
