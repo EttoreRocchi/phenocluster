@@ -16,6 +16,7 @@ from plotly.subplots import make_subplots
 
 from ._base import (
     STYLE,
+    BaseVisualizer,
     _hover_p_value,
     _label_with_stars,
     _p_value_stars,
@@ -181,10 +182,10 @@ def _label_position_on_bezier(
     return float(lx), float(ly)
 
 
-class MultistateVisualizerMixin:
-    """Mixin providing multistate visualization methods.
+class MultistateVisualizer(BaseVisualizer):
+    """Multistate visualization methods.
 
-    Assumes the following attributes are provided by BaseVisualizer:
+    Attributes inherited from BaseVisualizer:
     - self.config: PhenoClusterConfig
     - self.n_clusters: int
     - self.logger: Logger

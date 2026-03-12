@@ -167,7 +167,6 @@ def _save_model_selection(results, data_dir, results_dir, logger):
                     {
                         "n_clusters": int(row["n_clusters"]),
                         "mean_score": float(row["mean_score"]) * sign,
-                        "std_score": abs(float(row["std_score"])),
                         "rank": int(row["rank"]),
                     }
                 )

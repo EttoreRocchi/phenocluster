@@ -11,13 +11,13 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ._base import STYLE, apply_standard_layout
+from ._base import STYLE, BaseVisualizer, apply_standard_layout
 
 
-class ClusterDistributionMixin:
-    """Mixin providing cluster distribution and model selection plots.
+class ClusterDistributionVisualizer(BaseVisualizer):
+    """Cluster distribution and model selection plots.
 
-    Assumes the following attributes are provided by BaseVisualizer:
+    Attributes inherited from BaseVisualizer:
         self.config
         self.n_clusters
         self.logger

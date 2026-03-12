@@ -9,7 +9,7 @@ All preprocessing follows a fit/transform pattern to prevent data leakage:
 - ``transform_*()`` methods apply the learned parameters to any data.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -116,8 +116,8 @@ class DataPreprocessor:
     def get_feature_matrix(
         self,
         df: pd.DataFrame,
-        continuous_cols: List[str] = None,
-        categorical_cols: List[str] = None,
+        continuous_cols: Optional[List[str]] = None,
+        categorical_cols: Optional[List[str]] = None,
     ) -> np.ndarray:
         """Extract feature matrix using fitted encoders."""
         return self._encoder.get_feature_matrix(df, continuous_cols, categorical_cols)

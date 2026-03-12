@@ -14,13 +14,13 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from ._base import STYLE, apply_standard_layout
+from ._base import STYLE, BaseVisualizer, apply_standard_layout
 
 
-class ClusterHeatmapMixin:
-    """Mixin providing heatmap and categorical flow visualizations.
+class ClusterHeatmapVisualizer(BaseVisualizer):
+    """Heatmap and categorical flow visualizations.
 
-    Assumes the following attributes are provided by BaseVisualizer:
+    Attributes inherited from BaseVisualizer:
         self.config
         self.n_clusters
         self.logger

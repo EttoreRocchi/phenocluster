@@ -171,9 +171,10 @@ class LassoSelector(BaseFeatureSelector):
         keep_mask = np.ones(len(all_features), dtype=bool)
         scores = {}
 
+        numeric_index = {f: idx for idx, f in enumerate(numeric_features)}
         for i, feat in enumerate(all_features):
-            if feat in numeric_features:
-                num_idx = numeric_features.index(feat)
+            if feat in numeric_index:
+                num_idx = numeric_index[feat]
                 keep_mask[i] = keep_mask_numeric[num_idx]
                 scores[feat] = float(self.coefficients_[num_idx])
             else:

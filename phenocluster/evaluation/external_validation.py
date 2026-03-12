@@ -278,16 +278,10 @@ class ExternalValidator:
         if not cluster_ids:
             return None
 
-        # Build contingency table: rows = [deriv_positive, ext_positive]
-        #                                  [deriv_negative, ext_negative]
-        # Actually we want a 2 x K table where each column is a cluster
-        # and rows are [derivation, external], with cells = n_positive.
-        # But a standard chi-square for distribution shift should compare
-        # the 2 x 2K table (positive/negative per cluster per cohort).
-        # Simplest: 2-row (cohorts) x K-col (clusters) table of positive counts
-        # with expected counts derived from totals.
-        # More informative: per-cluster 2x2 table. But for a single summary
-        # test we use a 2 x K contingency table of [n_positive, n_negative].
+        # Build a 2-by-2K contingency table where each cluster contributes two
+        # columns: positive count and negative count, with one row per cohort
+        # (derivation vs external). This layout lets a single chi-square test
+        # capture distribution shift across all clusters simultaneously.
 
         # Build 2 x (2*K) table: for each cluster, [positive, negative] per cohort
         row_deriv = []

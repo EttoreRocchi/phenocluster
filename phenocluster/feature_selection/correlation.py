@@ -100,13 +100,14 @@ class CorrelationSelector(BaseFeatureSelector):
         keep_mask = np.ones(len(all_features), dtype=bool)
         scores = {}
 
+        numeric_index = {f: idx for idx, f in enumerate(numeric_features)}
         for i, feat in enumerate(all_features):
             if feat in features_to_remove:
                 keep_mask[i] = False
                 scores[feat] = 0.0
-            elif feat in numeric_features:
+            elif feat in numeric_index:
                 # Score based on maximum correlation with other features
-                feat_idx = numeric_features.index(feat)
+                feat_idx = numeric_index[feat]
                 max_corr = (
                     np.max(np.abs(np.delete(corr_matrix[feat_idx], feat_idx)))
                     if len(numeric_features) > 1

@@ -2,7 +2,7 @@
 PhenoCluster Visualization - Facade
 ====================================
 
-Composes domain-specific visualizer mixins into a single ``Visualizer`` class
+Composes domain-specific visualizer classes into a single ``Visualizer`` facade
 that preserves the original public API.
 
 Individual plotting logic lives in:
@@ -22,35 +22,130 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ..config import PhenoClusterConfig
-from ._base import BaseVisualizer
-from ._cluster_distribution import ClusterDistributionMixin
-from ._cluster_heatmap import ClusterHeatmapMixin
-from ._cluster_quality import ClusterQualityMixin
-from ._multistate import MultistateVisualizerMixin
-from ._outcome import OutcomeVisualizerMixin
-from ._survival import SurvivalVisualizerMixin
+from ..utils.logging import get_logger
+from ._cluster_distribution import ClusterDistributionVisualizer
+from ._cluster_heatmap import ClusterHeatmapVisualizer
+from ._cluster_quality import ClusterQualityVisualizer
+from ._multistate import MultistateVisualizer
+from ._outcome import OutcomeVisualizer
+from ._survival import SurvivalVisualizer
 
 
-class Visualizer(
-    ClusterDistributionMixin,
-    ClusterHeatmapMixin,
-    ClusterQualityMixin,
-    SurvivalVisualizerMixin,
-    OutcomeVisualizerMixin,
-    MultistateVisualizerMixin,
-    BaseVisualizer,
-):
+class Visualizer:
     """
     Handles all visualization tasks for phenotype discovery.
 
     Creates high-quality visualizations suitable for scientific analysis,
     with support for both interactive HTML and static PNG outputs.
+
+    Uses composition to delegate to domain-specific visualizer classes.
     """
 
     def __init__(self, config: PhenoClusterConfig, n_clusters: int):
-        super().__init__(config, n_clusters)
+        self.config = config
+        self.n_clusters = n_clusters
+        self.logger = get_logger("visualization", config)
 
-    # Orchestrator
+        self._distribution = ClusterDistributionVisualizer(config, n_clusters)
+        self._heatmap = ClusterHeatmapVisualizer(config, n_clusters)
+        self._quality = ClusterQualityVisualizer(config, n_clusters)
+        self._survival = SurvivalVisualizer(config, n_clusters)
+        self._outcome = OutcomeVisualizer(config, n_clusters)
+        self._multistate = MultistateVisualizer(config, n_clusters)
+
+    def create_cluster_distribution(self, labels, title=None):
+        return self._distribution.create_cluster_distribution(labels, title)
+
+    def create_model_selection_plot(self, selection_results, title=None):
+        return self._distribution.create_model_selection_plot(selection_results, title)
+
+    def create_heatmap(
+        self,
+        df,
+        labels,
+        consensus_matrix=None,
+        show_significance=True,
+        title=None,
+    ):
+        return self._heatmap.create_heatmap(df, labels, consensus_matrix, show_significance, title)
+
+    def create_categorical_flow_plots(self, df, labels):
+        return self._heatmap.create_categorical_flow_plots(df, labels)
+
+    def create_categorical_heatmap(self, df, labels, title=None):
+        return self._heatmap.create_categorical_heatmap(df, labels, title)
+
+    def create_classification_quality_plot(
+        self,
+        posterior_probs,
+        labels,
+        title=None,
+    ):
+        return self._quality.create_classification_quality_plot(posterior_probs, labels, title)
+
+    def create_consensus_matrix_plot(
+        self,
+        consensus_matrix,
+        labels,
+        title=None,
+    ):
+        return self._quality.create_consensus_matrix_plot(consensus_matrix, labels, title)
+
+    def create_kaplan_meier_plot(
+        self,
+        survival_result,
+        target_name,
+        title=None,
+    ):
+        return self._survival.create_kaplan_meier_plot(survival_result, target_name, title)
+
+    def create_nelson_aalen_plot(
+        self,
+        survival_result,
+        target_name,
+        title=None,
+    ):
+        return self._survival.create_nelson_aalen_plot(survival_result, target_name, title)
+
+    def create_odds_ratio_forest_plot(
+        self,
+        outcome_results,
+        title=None,
+        reference_label=None,
+        reference_phenotype=0,
+    ):
+        return self._outcome.create_odds_ratio_forest_plot(
+            outcome_results, title, reference_label, reference_phenotype
+        )
+
+    def create_pathway_frequency_plot(
+        self,
+        pathway_results,
+        top_n=15,
+        title=None,
+    ):
+        return self._multistate.create_pathway_frequency_plot(pathway_results, top_n, title)
+
+    def create_transition_hazard_forest_plot(
+        self,
+        transition_results,
+        title=None,
+        reference_phenotype=0,
+    ):
+        return self._multistate.create_transition_hazard_forest_plot(
+            transition_results, title, reference_phenotype
+        )
+
+    def create_state_occupation_uncertainty_plot(
+        self,
+        mc_results,
+        title=None,
+    ):
+        return self._multistate.create_state_occupation_uncertainty_plot(mc_results, title)
+
+    def create_state_diagram(self, transition_results, title=None):
+        return self._multistate.create_state_diagram(transition_results, title)
+
     def create_all_plots(
         self,
         df: pd.DataFrame,
@@ -150,7 +245,7 @@ class Visualizer(
         if outcome_results:
             forest_plot = self.create_odds_ratio_forest_plot(
                 outcome_results,
-                reference_label=f"Phenotype {reference_phenotype} (Reference)",
+                reference_label=(f"Phenotype {reference_phenotype} (Reference)"),
                 reference_phenotype=reference_phenotype,
             )
             if forest_plot:

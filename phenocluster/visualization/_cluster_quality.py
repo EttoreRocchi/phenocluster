@@ -11,13 +11,13 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ._base import STYLE, apply_standard_layout
+from ._base import STYLE, BaseVisualizer, apply_standard_layout
 
 
-class ClusterQualityMixin:
-    """Mixin providing classification quality and consensus matrix plots.
+class ClusterQualityVisualizer(BaseVisualizer):
+    """Classification quality and consensus matrix plots.
 
-    Assumes the following attributes are provided by BaseVisualizer:
+    Attributes inherited from BaseVisualizer:
         self.config
         self.n_clusters
         self.logger

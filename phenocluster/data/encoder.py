@@ -1,5 +1,6 @@
 """Categorical encoding with fit/transform pattern."""
 
+import warnings
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -65,7 +66,7 @@ class Encoder:
             sparse_output=False,
             handle_unknown=self.config.categorical_encoding.handle_unknown,
         )
-        cat_data = df[self.config.categorical_columns].astype(str)
+        cat_data = df[self.config.categorical_columns].fillna("_MISSING").astype(str)
         self.onehot_encoder.fit(cat_data)
 
         encoded_cols = []
@@ -133,7 +134,7 @@ class Encoder:
     def _transform_onehot(self, df):
         if self.onehot_encoder is None:
             raise RuntimeError("OneHotEncoder not fitted. Call fit() first.")
-        cat_data = df[self.config.categorical_columns].astype(str)
+        cat_data = df[self.config.categorical_columns].fillna("_MISSING").astype(str)
         encoded_array = self.onehot_encoder.transform(cat_data)
 
         encoded_cols = []
@@ -147,7 +148,14 @@ class Encoder:
     def _transform_frequency(self, df):
         for col in self.config.categorical_columns:
             if col in df.columns and col in self.frequency_encodings:
-                df[f"{col}_encoded"] = df[col].map(self.frequency_encodings[col]).fillna(0.0)
+                mapped = df[col].map(self.frequency_encodings[col])
+                n_unknown = mapped.isna().sum() - df[col].isna().sum()
+                if n_unknown > 0:
+                    warnings.warn(
+                        f"Column '{col}': {n_unknown} unknown categories mapped to frequency 0.0",
+                        stacklevel=2,
+                    )
+                df[f"{col}_encoded"] = mapped.fillna(0.0)
         return df
 
     def get_feature_matrix(

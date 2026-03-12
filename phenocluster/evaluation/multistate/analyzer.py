@@ -86,97 +86,48 @@ class MultistateAnalyzer:
 
         times = time_points or self.multistate_config.monte_carlo_time_points
         max_trans = max_transitions or self.multistate_config.max_transitions_per_path
+        n_sims = n_simulations or self.multistate_config.monte_carlo_n_simulations
 
-        # Validate time points against observed follow-up
-        if trajectories:
-            max_observed = max(
-                t.time_at_each_state[-1] if t.time_at_each_state else 0 for t in trajectories
-            )
-            if max_observed > 0:
-                beyond = [t for t in times if t > max_observed]
-                if beyond:
-                    self.logger.warning(
-                        f"MC time points {beyond} exceed max observed "
-                        f"follow-up ({max_observed:.1f}). "
-                        f"Extrapolated probabilities may be unreliable."
-                    )
+        self._warn_extrapolation(trajectories, times)
 
         initial_state = self._traj_builder.get_initial_state().id
         all_state_ids = [s.id for s in self.multistate_config.states]
-        n_sims = n_simulations or self.multistate_config.monte_carlo_n_simulations
-
         traj_by_id = {t.sample_id: t for t in trajectories}
+        n_boot = 200
+
         state_probs: Dict[int, Dict[int, List[float]]] = {}
         state_probs_lower: Dict[int, Dict[int, List[float]]] = {}
         state_probs_upper: Dict[int, Dict[int, List[float]]] = {}
-        n_boot = 200
 
         for phenotype in range(self.n_clusters):
-            state_probs[phenotype] = {s: [0.0] * len(times) for s in all_state_ids}
-            state_probs_lower[phenotype] = {s: [0.0] * len(times) for s in all_state_ids}
-            state_probs_upper[phenotype] = {s: [0.0] * len(times) for s in all_state_ids}
+            defaults = {s: [0.0] * len(times) for s in all_state_ids}
+            state_probs[phenotype] = dict(defaults)
+            state_probs_lower[phenotype] = dict(defaults)
+            state_probs_upper[phenotype] = dict(defaults)
 
-            patient_idxs = phenotype_indices.get(phenotype, [])
-            if not patient_idxs:
-                self.logger.warning(f"No patients in phenotype {phenotype}")
-                continue
-
-            patient_trajs = [traj_by_id[i] for i in patient_idxs if i in traj_by_id]
-            if not patient_trajs:
-                self.logger.warning(f"No valid trajectories for phenotype {phenotype}")
-                continue
-
-            # Cap per-patient simulations so total work stays roughly the same
-            per_patient_sims = max(50, n_sims // len(patient_trajs))
-
-            # Marginalise over individual patients
-            patient_probs = []
-            for traj in patient_trajs:
-                covs = traj.covariates.values
-                try:
-                    probs = self._mc_for_covariates(
-                        model,
-                        covs,
-                        initial_state,
-                        all_state_ids,
-                        times,
-                        max_trans,
-                        per_patient_sims,
-                    )
-                    patient_probs.append(probs)
-                except Exception:
-                    continue
-
+            patient_probs = self._simulate_phenotype_patients(
+                model,
+                phenotype,
+                phenotype_indices,
+                traj_by_id,
+                initial_state,
+                all_state_ids,
+                times,
+                max_trans,
+                n_sims,
+            )
             if not patient_probs:
-                self.logger.warning(f"Monte Carlo failed for all patients in phenotype {phenotype}")
                 continue
 
-            # Average across patients (marginalisation)
-            for s in all_state_ids:
-                vals = [p[s] for p in patient_probs]
-                state_probs[phenotype][s] = [
-                    float(np.mean([v[t_idx] for v in vals])) for t_idx in range(len(times))
-                ]
-
-            # Bootstrap CIs
-            rng = np.random.RandomState(self.config.random_state)
-            boot_probs: Dict[int, List[List[float]]] = {s: [] for s in all_state_ids}
-            for _ in range(n_boot):
-                boot_idx = rng.choice(len(patient_probs), len(patient_probs), replace=True)
-                for s in all_state_ids:
-                    vals = [patient_probs[boot_idx[j]][s] for j in range(len(boot_idx))]
-                    boot_probs[s].append(
-                        [float(np.mean([v[t_idx] for v in vals])) for t_idx in range(len(times))]
-                    )
-
-            for s in all_state_ids:
-                arr = np.array(boot_probs[s])  # shape (n_boot, n_times)
-                state_probs_lower[phenotype][s] = np.percentile(arr, 2.5, axis=0).tolist()
-                state_probs_upper[phenotype][s] = np.percentile(arr, 97.5, axis=0).tolist()
-
-            self.logger.info(
-                f"Phenotype {phenotype}: marginalised over {len(patient_probs)} patients "
-                f"({per_patient_sims} sims each), {n_boot} bootstrap resamples"
+            self._aggregate_patient_probs(
+                phenotype,
+                patient_probs,
+                all_state_ids,
+                times,
+                state_probs,
+                state_probs_lower,
+                state_probs_upper,
+                n_boot,
             )
 
         self.logger.info(f"Monte Carlo completed: {len(times)} time points")
@@ -194,6 +145,106 @@ class MultistateAnalyzer:
             state_probabilities_lower=state_probs_lower,
             state_probabilities_upper=state_probs_upper,
         )
+
+    def _warn_extrapolation(self, trajectories, times):
+        """Warn if MC time points exceed observed follow-up."""
+        if not trajectories:
+            return
+        max_observed = max(
+            t.time_at_each_state[-1] if t.time_at_each_state else 0 for t in trajectories
+        )
+        if max_observed <= 0:
+            return
+        beyond = [t for t in times if t > max_observed]
+        if beyond:
+            self.logger.warning(
+                f"MC time points {beyond} exceed max observed "
+                f"follow-up ({max_observed:.1f}). "
+                f"Extrapolated probabilities may be unreliable."
+            )
+
+    def _simulate_phenotype_patients(
+        self,
+        model,
+        phenotype,
+        phenotype_indices,
+        traj_by_id,
+        initial_state,
+        all_state_ids,
+        times,
+        max_trans,
+        n_sims,
+    ) -> List[Dict[int, List[float]]]:
+        """Run MC simulations for all patients in a phenotype."""
+        patient_idxs = phenotype_indices.get(phenotype, [])
+        if not patient_idxs:
+            self.logger.warning(f"No patients in phenotype {phenotype}")
+            return []
+
+        patient_trajs = [traj_by_id[i] for i in patient_idxs if i in traj_by_id]
+        if not patient_trajs:
+            self.logger.warning(f"No valid trajectories for phenotype {phenotype}")
+            return []
+
+        per_patient_sims = max(50, n_sims // len(patient_trajs))
+        patient_probs = []
+        for traj in patient_trajs:
+            try:
+                probs = self._mc_for_covariates(
+                    model,
+                    traj.covariates.values,
+                    initial_state,
+                    all_state_ids,
+                    times,
+                    max_trans,
+                    per_patient_sims,
+                )
+                patient_probs.append(probs)
+            except Exception:
+                continue
+
+        if not patient_probs:
+            self.logger.warning(f"Monte Carlo failed for all patients in phenotype {phenotype}")
+        else:
+            self.logger.info(
+                f"Phenotype {phenotype}: marginalised over "
+                f"{len(patient_probs)} patients "
+                f"({per_patient_sims} sims each)"
+            )
+        return patient_probs
+
+    def _aggregate_patient_probs(
+        self,
+        phenotype,
+        patient_probs,
+        all_state_ids,
+        times,
+        state_probs,
+        state_probs_lower,
+        state_probs_upper,
+        n_boot,
+    ):
+        """Average patient-level probs and compute bootstrap CIs."""
+        for s in all_state_ids:
+            vals = [p[s] for p in patient_probs]
+            state_probs[phenotype][s] = [
+                float(np.mean([v[t_idx] for v in vals])) for t_idx in range(len(times))
+            ]
+
+        rng = np.random.RandomState(self.config.random_state)
+        boot_probs: Dict[int, List[List[float]]] = {s: [] for s in all_state_ids}
+        for _ in range(n_boot):
+            boot_idx = rng.choice(len(patient_probs), len(patient_probs), replace=True)
+            for s in all_state_ids:
+                vals = [patient_probs[boot_idx[j]][s] for j in range(len(boot_idx))]
+                boot_probs[s].append(
+                    [float(np.mean([v[t_idx] for v in vals])) for t_idx in range(len(times))]
+                )
+
+        for s in all_state_ids:
+            arr = np.array(boot_probs[s])
+            state_probs_lower[phenotype][s] = np.percentile(arr, 2.5, axis=0).tolist()
+            state_probs_upper[phenotype][s] = np.percentile(arr, 97.5, axis=0).tolist()
 
     def _mc_for_covariates(
         self,
@@ -217,14 +268,17 @@ class MultistateAnalyzer:
             max_transitions=max_trans,
             n_jobs=1,
         )
-        result: Dict[int, List[float]] = {s: [0.0] * len(times) for s in all_state_ids}
+        # Vectorized state counting: collect states into array and use bincount
+        sorted_ids = sorted(all_state_ids)
+        id_to_idx = {s: i for i, s in enumerate(sorted_ids)}
+        n_states = len(sorted_ids)
+        counts = np.zeros((len(times), n_states), dtype=int)
         for t_idx, t in enumerate(times):
-            state_counts = {s: 0 for s in all_state_ids}
-            for sim_traj in simulated:
-                st = sim_traj.state_at_time(t, initial_state)
-                state_counts[st] = state_counts.get(st, 0) + 1
-            for s in all_state_ids:
-                result[s][t_idx] = state_counts.get(s, 0) / n_sims
+            states = np.array([sim_traj.state_at_time(t, initial_state) for sim_traj in simulated])
+            for s_idx, s in enumerate(sorted_ids):
+                counts[t_idx, s_idx] = np.sum(states == s)
+        probs = counts / n_sims
+        result: Dict[int, List[float]] = {s: probs[:, id_to_idx[s]].tolist() for s in all_state_ids}
         return result
 
     def analyze_pathway_frequencies(self, data, labels, trajectories=None):
@@ -352,31 +406,32 @@ class MultistateAnalyzer:
                 }
                 for pr in results.pathway_results
             ],
+            "state_occupation_probabilities": (
+                self._mc_results_to_dict(results.state_occupation_probabilities)
+            ),
         }
-
-        if results.state_occupation_probabilities:
-            mc = results.state_occupation_probabilities
-            mc_dict: Dict[str, Any] = {
-                "time_points": mc.time_points,
-                "n_simulations": mc.n_simulations,
-                "by_phenotype": {
-                    str(phenotype): {str(state): probs for state, probs in state_probs.items()}
-                    for phenotype, state_probs in mc.state_probabilities.items()
-                },
-                "simulation_summary": mc.simulation_summary,
-            }
-            if mc.state_probabilities_lower is not None:
-                mc_dict["by_phenotype_lower"] = {
-                    str(phenotype): {str(state): probs for state, probs in state_probs.items()}
-                    for phenotype, state_probs in mc.state_probabilities_lower.items()
-                }
-            if mc.state_probabilities_upper is not None:
-                mc_dict["by_phenotype_upper"] = {
-                    str(phenotype): {str(state): probs for state, probs in state_probs.items()}
-                    for phenotype, state_probs in mc.state_probabilities_upper.items()
-                }
-            result_dict["state_occupation_probabilities"] = mc_dict
-        else:
-            result_dict["state_occupation_probabilities"] = None
-
         return result_dict
+
+    @staticmethod
+    def _mc_results_to_dict(mc) -> Any:
+        """Convert MonteCarloResults to a serializable dict."""
+        if mc is None:
+            return None
+
+        def _stringify(probs_dict):
+            return {
+                str(phenotype): {str(state): probs for state, probs in sp.items()}
+                for phenotype, sp in probs_dict.items()
+            }
+
+        mc_dict: Dict[str, Any] = {
+            "time_points": mc.time_points,
+            "n_simulations": mc.n_simulations,
+            "by_phenotype": _stringify(mc.state_probabilities),
+            "simulation_summary": mc.simulation_summary,
+        }
+        if mc.state_probabilities_lower is not None:
+            mc_dict["by_phenotype_lower"] = _stringify(mc.state_probabilities_lower)
+        if mc.state_probabilities_upper is not None:
+            mc_dict["by_phenotype_upper"] = _stringify(mc.state_probabilities_upper)
+        return mc_dict

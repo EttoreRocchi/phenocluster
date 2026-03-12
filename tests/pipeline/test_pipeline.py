@@ -441,7 +441,7 @@ class TestConfigSerialization:
         assert config.outlier.winsorize_limits == (0.02, 0.02)
 
 
-# PatientTrajectory.state_at_time()
+# Test state_at_time lookups
 
 
 class TestStateAtTime:

@@ -230,32 +230,69 @@ class StabilityAnalyzer:
         if n_jobs != 1:
             self.logger.info(f"Parallel processing: {n_jobs} jobs (-1 = all cores)")
 
+        X = self._cap_consensus_samples(X)
         n_samples = len(X)
-
-        MAX_CONSENSUS_SAMPLES = 10_000
-        if n_samples > MAX_CONSENSUS_SAMPLES:
-            self.logger.warning(
-                f"Dataset has {n_samples} samples; consensus matrix would require "
-                f"{2 * n_samples**2 * 8 / 1e9:.1f} GB. Subsampling to {MAX_CONSENSUS_SAMPLES}."
-            )
-            rng = np.random.RandomState(self.config.random_state)
-            subsample_idx = rng.choice(n_samples, MAX_CONSENSUS_SAMPLES, replace=False)
-            X = X[subsample_idx]
-            n_samples = MAX_CONSENSUS_SAMPLES
-
         subsample_size = int(n_samples * self.config.stability.subsample_fraction)
-
-        # Co-occurrence matrix: how often pairs of samples are in same cluster
-        cooccurrence_matrix = np.zeros((n_samples, n_samples))
-        # Co-sampling matrix: how often pairs were both in the same subsample (Monti et al. 2003)
-        cosampling_matrix = np.zeros((n_samples, n_samples))
 
         self.logger.info("Running consensus clustering analysis...")
 
-        # Get min cluster size
+        results = self._run_consensus_iterations(X, model, n_samples, subsample_size, n_jobs)
+
+        cooccurrence_matrix, cosampling_matrix, run_counts = self._accumulate_results(
+            results, n_samples
+        )
+
+        if run_counts["valid"] == 0:
+            self.logger.warning("All subsampling runs failed or had wrong cluster counts")
+            return {
+                "mean_consensus": 0.0,
+                "std_consensus": 0.0,
+                "ci_95_lower": 0.0,
+                "ci_95_upper": 0.0,
+                "consensus_matrix": None,
+                "n_runs": 0,
+                "n_valid": 0,
+                "n_failed": run_counts["failed"],
+                "n_wrong_clusters": run_counts["wrong_clusters"],
+            }
+
+        consensus_matrix = self._build_consensus_matrix(cooccurrence_matrix, cosampling_matrix)
+
+        stats = self._compute_consensus_stats(consensus_matrix, results)
+
+        self._log_consensus_results(stats, run_counts)
+
+        return {
+            "mean_consensus": stats["mean"],
+            "std_consensus": stats["std"],
+            "ci_95_lower": stats["ci_lower"],
+            "ci_95_upper": stats["ci_upper"],
+            "consensus_matrix": consensus_matrix,
+            "n_runs": self.config.stability.n_runs,
+            "n_valid": run_counts["valid"],
+            "n_failed": run_counts["failed"],
+            "n_wrong_clusters": run_counts["wrong_clusters"],
+        }
+
+    def _cap_consensus_samples(self, X: np.ndarray) -> np.ndarray:
+        """Cap dataset size to avoid excessive memory for consensus matrix."""
+        MAX_CONSENSUS_SAMPLES = 10_000
+        n_samples = len(X)
+        if n_samples > MAX_CONSENSUS_SAMPLES:
+            self.logger.warning(
+                f"Dataset has {n_samples} samples; consensus matrix would "
+                f"require {2 * n_samples**2 * 8 / 1e9:.1f} GB. "
+                f"Subsampling to {MAX_CONSENSUS_SAMPLES}."
+            )
+            rng = np.random.default_rng(self.config.random_state)
+            idx = rng.choice(n_samples, MAX_CONSENSUS_SAMPLES, replace=False)
+            return X[idx]
+        return X
+
+    def _run_consensus_iterations(self, X, model, n_samples, subsample_size, n_jobs):
+        """Run all consensus clustering iterations in parallel."""
         min_cluster_size = self.config.model_selection.get_min_cluster_size(n_samples)
 
-        # Run iterations in parallel (tqdm wraps result generator for completion tracking)
         gen = Parallel(n_jobs=n_jobs, return_as="generator")(
             delayed(_run_single_consensus_iteration)(
                 i,
@@ -272,7 +309,7 @@ class StabilityAnalyzer:
             )
             for i in range(self.config.stability.n_runs)
         )
-        results = list(
+        return list(
             tqdm(
                 gen,
                 total=self.config.stability.n_runs,
@@ -283,60 +320,45 @@ class StabilityAnalyzer:
             )
         )
 
-        # Process results
-        valid_runs = 0
-        n_failed = 0
-        n_wrong_clusters = 0
-        n_small_clusters = 0
+    @staticmethod
+    def _accumulate_results(results, n_samples):
+        """Accumulate co-occurrence and co-sampling matrices from results."""
+        cooccurrence = np.zeros((n_samples, n_samples))
+        cosampling = np.zeros((n_samples, n_samples))
+        counts = {"valid": 0, "failed": 0, "wrong_clusters": 0, "small_clusters": 0}
 
         for indices, labels_sub, status in results:
             if status == "valid":
                 ix = np.ix_(indices, indices)
-                cosampling_matrix[ix] += 1
+                cosampling[ix] += 1
                 same_cluster = labels_sub[:, None] == labels_sub[None, :]
-                cooccurrence_matrix[ix] += same_cluster
-                valid_runs += 1
-            elif status == "wrong_clusters":
-                n_wrong_clusters += 1
-            elif status == "small_clusters":
-                n_small_clusters += 1
+                cooccurrence[ix] += same_cluster
+                counts["valid"] += 1
             else:
-                n_failed += 1
+                counts[status] = counts.get(status, 0) + 1
 
-        if valid_runs == 0:
-            self.logger.warning("All subsampling runs failed or had wrong cluster counts")
-            return {
-                "mean_consensus": 0.0,
-                "std_consensus": 0.0,
-                "ci_95_lower": 0.0,
-                "ci_95_upper": 0.0,
-                "consensus_matrix": None,
-                "n_runs": 0,
-                "n_valid": 0,
-                "n_failed": n_failed,
-                "n_wrong_clusters": n_wrong_clusters,
-            }
+        return cooccurrence, cosampling, counts
 
-        # Normalize consensus matrix: proportion of co-samplings where i,j shared a cluster
-        # (Monti et al. 2003: C(i,j) = co-occurrence(i,j) / co-sampling(i,j))
-        consensus_matrix = np.zeros((n_samples, n_samples))
-        mask = cosampling_matrix > 0
-        consensus_matrix[mask] = cooccurrence_matrix[mask] / cosampling_matrix[mask]
-        np.fill_diagonal(consensus_matrix, 1.0)
+    @staticmethod
+    def _build_consensus_matrix(cooccurrence, cosampling):
+        """Normalize co-occurrence by co-sampling (Monti et al. 2003)."""
+        n = cooccurrence.shape[0]
+        consensus = np.zeros((n, n))
+        mask = cosampling > 0
+        consensus[mask] = cooccurrence[mask] / cosampling[mask]
+        np.fill_diagonal(consensus, 1.0)
+        return consensus
 
-        # Calculate consensus score
-        # High values (near 0 or 1) are stable, mid values (near 0.5) are unstable
-        # Distance from 0.5 (indecision) maps to stability
-        stability_values = np.abs(consensus_matrix - 0.5) * 2  # Maps [0,1] to stability
-        # Use upper triangle only (matrix is symmetric)
-        triu_indices = np.triu_indices_from(stability_values, k=1)
-        stability_scores = stability_values[triu_indices]
+    @staticmethod
+    def _compute_consensus_stats(consensus_matrix, results):
+        """Compute mean, std, and 95% CI for consensus stability."""
+        stability_values = np.abs(consensus_matrix - 0.5) * 2
+        triu_idx = np.triu_indices_from(stability_values, k=1)
+        stability_scores = stability_values[triu_idx]
 
-        mean_consensus = float(np.mean(stability_scores))
-        std_consensus = float(np.std(stability_scores))
+        mean_val = float(np.mean(stability_scores))
+        std_val = float(np.std(stability_scores))
 
-        # Compute per-run stability scores for CI estimation
-        # Each run contributes one scalar: the mean |C_ij - 0.5|*2 over pairs in that run
         per_run_scores = []
         for indices, labels_sub, status in results:
             if status == "valid":
@@ -345,41 +367,30 @@ class StabilityAnalyzer:
                 run_stability = float(np.mean(np.abs(run_pairs[triu] - 0.5) * 2))
                 per_run_scores.append(run_stability)
 
-        # Calculate 95% CI from per-run distribution (not per-pair)
-        per_run_scores = np.array(per_run_scores)
-        n_runs_ci = len(per_run_scores)
-        se_consensus = float(np.std(per_run_scores)) / np.sqrt(n_runs_ci)
-        ci_95_lower = mean_consensus - 1.96 * se_consensus
-        ci_95_upper = mean_consensus + 1.96 * se_consensus
+        per_run_arr = np.array(per_run_scores)
+        se = float(np.std(per_run_arr)) / np.sqrt(len(per_run_arr))
+        ci_lower = max(0.0, float(mean_val - 1.96 * se))
+        ci_upper = min(1.0, float(mean_val + 1.96 * se))
 
-        # Ensure CI is within [0, 1]
-        ci_95_lower = max(0.0, float(ci_95_lower))
-        ci_95_upper = min(1.0, float(ci_95_upper))
-
-        results = {
-            "mean_consensus": mean_consensus,
-            "std_consensus": std_consensus,
-            "ci_95_lower": ci_95_lower,
-            "ci_95_upper": ci_95_upper,
-            "consensus_matrix": consensus_matrix,
-            "n_runs": self.config.stability.n_runs,
-            "n_valid": valid_runs,
-            "n_failed": n_failed,
-            "n_wrong_clusters": n_wrong_clusters,
+        return {
+            "mean": mean_val,
+            "std": std_val,
+            "ci_lower": ci_lower,
+            "ci_upper": ci_upper,
         }
 
+    def _log_consensus_results(self, stats, run_counts):
+        """Log consensus clustering results."""
         self.logger.info("Consensus Clustering Results:")
-        self.logger.info(f"  Valid runs: {valid_runs}/{self.config.stability.n_runs}")
-        if n_wrong_clusters > 0:
-            self.logger.info(f"  Runs with wrong cluster count: {n_wrong_clusters}")
-        if n_failed > 0:
-            self.logger.info(f"  Failed runs: {n_failed}")
+        self.logger.info(f"  Valid runs: {run_counts['valid']}/{self.config.stability.n_runs}")
+        if run_counts["wrong_clusters"] > 0:
+            self.logger.info(f"  Runs with wrong cluster count: {run_counts['wrong_clusters']}")
+        if run_counts["failed"] > 0:
+            self.logger.info(f"  Failed runs: {run_counts['failed']}")
         self.logger.info(
-            f"  Mean consensus score: {mean_consensus:.4f} "
-            f"(95% CI: [{ci_95_lower:.4f}, {ci_95_upper:.4f}])"
+            f"  Mean consensus score: {stats['mean']:.4f} "
+            f"(95% CI: [{stats['ci_lower']:.4f}, {stats['ci_upper']:.4f}])"
         )
-
-        return results
 
     def analyze_cluster_stability(
         self, X: np.ndarray, model, original_labels: np.ndarray, n_clusters: int

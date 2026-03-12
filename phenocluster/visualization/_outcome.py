@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 
 from ._base import (
     STYLE,
+    BaseVisualizer,
     _hover_p_value,
     _label_with_stars,
     add_forest_decorations,
@@ -22,10 +23,10 @@ from ._base import (
 )
 
 
-class OutcomeVisualizerMixin:
-    """Mixin providing outcome visualization methods.
+class OutcomeVisualizer(BaseVisualizer):
+    """Outcome visualization (odds-ratio forest plots).
 
-    Assumes the following attributes are provided by BaseVisualizer:
+    Attributes inherited from BaseVisualizer:
         - self.config
         - self.n_clusters
         - self.logger

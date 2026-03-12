@@ -12,11 +12,11 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-from ._base import STYLE, apply_standard_layout
+from ._base import STYLE, BaseVisualizer, apply_standard_layout
 
 
-class SurvivalVisualizerMixin:
-    """Mixin providing survival curve visualizations.
+class SurvivalVisualizer(BaseVisualizer):
+    """Survival curve visualizations (Kaplan-Meier, Nelson-Aalen).
 
     Assumes the consuming class provides:
         self.config : PhenoClusterConfig

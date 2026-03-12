@@ -1,11 +1,20 @@
 .DEFAULT_GOAL := help
-.PHONY: help install install-docs lint format format-check pre-commit \
-        test test-cov docs docs-clean docs-serve clean release publish publish-test
+.PHONY: help install install-docs lint lint-check format format-check pre-commit \
+        test test-cov docs docs-clean docs-serve clean build check \
+        publish publish-test
 
 # Colours
 BOLD  := \033[1m
 RESET := \033[0m
 CYAN  := \033[36m
+
+# Overridable tool paths
+RUFF       ?= ruff
+PYTEST     ?= pytest
+PIP        ?= pip
+PRECOMMIT  ?= pre-commit
+TWINE      ?= twine
+BUILD      ?= python -m build
 
 # Paths
 SRC   := phenocluster
@@ -19,32 +28,39 @@ help:  ## Show this help message
 # Installation
 
 install:  ## Install package with development dependencies
-	@pip install -e ".[dev]"
+	@$(PIP) install -e ".[dev]"
 
 install-docs:  ## Install package with documentation dependencies
-	@pip install -e ".[docs]"
+	@$(PIP) install -e ".[docs]"
 
 # Code quality
 
-lint:  ## Run ruff linter
-	@ruff check --fix $(SRC)/ $(TESTS)/
+lint:  ## Run ruff linter (auto-fix)
+	@$(RUFF) check --fix $(SRC)/ $(TESTS)/
+
+lint-check:  ## Run ruff linter in check-only mode (no fixes)
+	@$(RUFF) check $(SRC)/ $(TESTS)/
 
 format:  ## Run ruff formatter (applies changes)
-	@ruff format $(SRC)/ $(TESTS)/
+	@$(RUFF) format $(SRC)/ $(TESTS)/
 
 format-check:  ## Run ruff formatter in check-only mode (no changes)
-	@ruff format --check $(SRC)/ $(TESTS)/
+	@$(RUFF) format --check $(SRC)/ $(TESTS)/
 
 pre-commit:  ## Run the full pre-commit suite on all files
-	@pre-commit run --all-files
+	@$(PRECOMMIT) run --all-files
 
 # Tests
 
 test:  ## Run tests
-	@pytest $(TESTS)/
+	@$(PYTEST) $(TESTS)/
 
 test-cov:  ## Run tests with coverage report
-	@pytest $(TESTS)/ --cov=$(SRC) --cov-report=term-missing
+	@$(PYTEST) $(TESTS)/ --cov=$(SRC) --cov-report=term-missing
+
+# Composite targets
+
+check: lint-check format-check test  ## Run lint + format-check + tests (CI gate)
 
 # Documentation
 
@@ -65,25 +81,14 @@ clean:  ## Remove build artefacts and caches
 	@find . -type d -name "*.egg-info"   -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf dist/ build/
 
-# Release
+# Build & Release
 
-publish: clean  ## Build and publish package to PyPI
-	@python -m build
-	@twine upload dist/*
+build: clean  ## Build distribution packages
+	@$(BUILD)
 
-publish-test: clean  ## Build and publish package to TestPyPI
-	@python -m build
-	@twine upload --repository testpypi dist/*
+publish: build  ## Build and publish package to PyPI
+	@$(TWINE) upload dist/*
 
-release:  ## Bump version, commit and tag (usage: make release VERSION=x.y.z)
-ifndef VERSION
-	$(error VERSION is not set. Usage: make release VERSION=x.y.z)
-endif
-	@echo "Bumping version to $(VERSION) in $(SRC)/__init__.py ..."
-	@sed -i 's/^__version__ = .*/__version__ = "$(VERSION)"/' $(SRC)/__init__.py
-	@git add $(SRC)/__init__.py
-	@git commit -m "chore: bump version to $(VERSION)"
-	@git tag v$(VERSION) -m "Release $(VERSION)"
-	@echo ""
-	@echo "Done. Next steps:"
-	@echo "  git push && git push --tags"
+publish-test: build  ## Build and publish package to TestPyPI
+	@$(TWINE) upload --repository testpypi dist/*
+

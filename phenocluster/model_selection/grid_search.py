@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from ..config import ModelSelectionConfig
 
+# IC criteria where lower values indicate better fit
+_LOWER_IS_BETTER = {"BIC", "AIC", "CAIC", "SABIC", "ICL"}
+
 
 class StepMixModelSelector:
     """
@@ -81,7 +84,7 @@ class StepMixModelSelector:
         self.best_model_ = None
         self.cv_results_ = None
         self.all_criteria_ = None
-        self.structural_params_ = None  # Parameters from structural model
+        self.structural_params_ = None
         self._is_fitted = False
         self._has_structural = structural is not None
 
@@ -96,21 +99,7 @@ class StepMixModelSelector:
         }
 
     def _create_base_model(self, include_structural: bool = False) -> StepMix:
-        """
-        Create base StepMix model for model selection.
-
-        Parameters
-        ----------
-        include_structural : bool
-            Whether to include structural model specification.
-            Set to False during model selection since the structural
-            model is fitted in a second step.
-
-        Returns
-        -------
-        StepMix
-            Configured StepMix model
-        """
+        """Create base StepMix model with configured parameters."""
         params = {
             "measurement": self.measurement,
             "random_state": self.config.random_state,
@@ -118,15 +107,12 @@ class StepMixModelSelector:
             "progress_bar": 0,
         }
 
-        # Add structural model if requested and available
         if include_structural and self._has_structural:
             params["structural"] = self.structural
-            # Add 3-step estimation parameters for structural models
             params["n_steps"] = self.stepmix_params.get("n_steps", 3)
             params["correction"] = self.stepmix_params.get("correction", "BCH")
             params["assignment"] = self.stepmix_params.get("assignment", "modal")
 
-        # Add remaining stepmix_params (excluding structural-specific ones if not used)
         for key, value in self.stepmix_params.items():
             if key not in ["n_steps", "correction", "assignment", "structural"]:
                 params[key] = value
@@ -141,26 +127,118 @@ class StepMixModelSelector:
             labels = model.predict(X)
             unique, counts = np.unique(labels, return_counts=True)
 
-            # Check if we got the expected number of clusters
             if len(unique) != model.n_components:
                 logger.debug(
-                    f"k={model.n_components}: expected {model.n_components} clusters, "
-                    f"got {len(unique)}"
+                    f"k={model.n_components}: expected {model.n_components} "
+                    f"clusters, got {len(unique)}"
                 )
                 return False
 
-            # Check minimum cluster size
             if np.min(counts) < min_size:
                 logger.debug(
-                    f"k={model.n_components}: cluster sizes {dict(zip(unique, counts))}, "
-                    f"min required {min_size}"
+                    f"k={model.n_components}: cluster sizes "
+                    f"{dict(zip(unique, counts))}, min required {min_size}"
                 )
                 return False
 
             return True
         except (ValueError, AttributeError):
-            # Model may not be fitted or prediction failed
             return False
+
+    def _fit_candidates(
+        self, X: np.ndarray, k_range: List[int], n_init: int, ic_method: str
+    ) -> Tuple[Dict[int, StepMix], Dict[int, float]]:
+        """Fit models for each candidate k and collect IC scores."""
+        fitted_models: Dict[int, StepMix] = {}
+        ic_scores: Dict[int, float] = {}
+
+        for k in k_range:
+            model = self._create_base_model(include_structural=False)
+            model.set_params(n_components=k, n_init=n_init)
+            try:
+                model.fit(X)
+                criteria = get_all_criteria(model, X)
+                ic_val = criteria.get(ic_method)
+                if ic_val is not None and np.isfinite(ic_val):
+                    fitted_models[k] = model
+                    ic_scores[k] = ic_val
+                else:
+                    logger.debug(f"k={k}: {ic_method} is non-finite, skipping")
+            except (ValueError, RuntimeError) as e:
+                logger.debug(f"k={k}: fitting failed: {e}")
+
+        if not ic_scores:
+            raise ValueError(
+                "All model fits failed. "
+                "This usually indicates a data issue "
+                "(e.g., too many missing values, "
+                "constant features, or incompatible data types). "
+                "Try enabling imputation or checking your data quality."
+            )
+
+        return fitted_models, ic_scores
+
+    def _select_best_k(self, ic_scores: Dict[int, float], ic_method: str) -> int:
+        """Select the best k based on IC scores."""
+        if ic_method in _LOWER_IS_BETTER:
+            return min(ic_scores, key=ic_scores.get)
+        return max(ic_scores, key=ic_scores.get)
+
+    def _build_results_table(
+        self, ic_scores: Dict[int, float], n_init: int, ic_method: str
+    ) -> pd.DataFrame:
+        """Build CV-style results table for reporting."""
+        rows = []
+        for rank, k in enumerate(
+            sorted(
+                ic_scores,
+                key=ic_scores.get,
+                reverse=(ic_method not in _LOWER_IS_BETTER),
+            ),
+            start=1,
+        ):
+            rows.append(
+                {
+                    "param_n_components": k,
+                    "param_n_init": n_init,
+                    "mean_test_score": (
+                        -ic_scores[k] if ic_method in _LOWER_IS_BETTER else ic_scores[k]
+                    ),
+                    "rank_test_score": rank,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def _apply_cluster_size_validation(
+        self,
+        best_model: StepMix,
+        X: np.ndarray,
+        min_cluster_size: int,
+        n_init: int,
+    ) -> Tuple[StepMix, Dict]:
+        """Validate cluster sizes and find alternative if needed."""
+        best_params = {
+            "n_components": best_model.n_components,
+            "n_init": n_init,
+        }
+
+        if self._validate_cluster_sizes(best_model, X, min_cluster_size):
+            return best_model, best_params
+
+        valid_model = self._find_valid_model(X, min_cluster_size)
+        if valid_model is not None:
+            best_params["n_components"] = valid_model.n_components
+            return valid_model, best_params
+
+        labels = best_model.predict(X)
+        _, counts = np.unique(labels, return_counts=True)
+        logger.warning(
+            f"No model meets min_cluster_size={min_cluster_size}. "
+            f"Proceeding with best k={best_model.n_components} "
+            f"(cluster sizes: {sorted(counts)}). "
+            f"Consider reducing min_cluster_size in config."
+        )
+        return best_model, best_params
 
     def select_best_model(
         self,
@@ -199,11 +277,9 @@ class StepMixModelSelector:
         n_samples = X.shape[0]
         min_cluster_size = self.config.get_min_cluster_size(n_samples)
         n_init = self.config.n_init[0] if self.config.n_init else 20
+        ic_method = self.config.criterion.upper()
+        k_range = param_grid["n_components"]
 
-        # Suppress numerical warnings from StepMix Gaussian emission during
-        # model selection. Zero-covariance clusters produce divide-by-zero and
-        # invalid-value warnings that are harmless (error_score=-inf handles
-        # them).
         from sklearn.exceptions import ConvergenceWarning
 
         old_np_settings = np.seterr(divide="ignore", invalid="ignore", over="ignore")
@@ -214,122 +290,29 @@ class StepMixModelSelector:
                 warnings.filterwarnings("ignore", category=UserWarning)
                 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
-                # Fit each n_components on the full training set
-                # and compute IC directly (not via CV fold scoring,
-                # which uses wrong n in the penalty term).
-                ic_method = self.config.criterion.upper()
-                k_range = param_grid["n_components"]
+                fitted_models, ic_scores = self._fit_candidates(X, k_range, n_init, ic_method)
 
-                fitted_models: Dict[int, StepMix] = {}
-                ic_scores: Dict[int, float] = {}
-
-                for k in k_range:
-                    model = self._create_base_model(include_structural=False)
-                    model.set_params(n_components=k, n_init=n_init)
-                    try:
-                        model.fit(X)
-                        criteria = get_all_criteria(model, X)
-                        ic_val = criteria.get(ic_method)
-                        if ic_val is not None and np.isfinite(ic_val):
-                            fitted_models[k] = model
-                            ic_scores[k] = ic_val
-                        else:
-                            logger.debug(f"k={k}: {ic_method} is non-finite, skipping")
-                    except (ValueError, RuntimeError) as e:
-                        logger.debug(f"k={k}: fitting failed: {e}")
-
-                if not ic_scores:
-                    raise ValueError(
-                        "All model fits failed. "
-                        "This usually indicates a data issue "
-                        "(e.g., too many missing values, "
-                        "constant features, or incompatible "
-                        "data types). "
-                        "Try enabling imputation or checking "
-                        "your data quality."
-                    )
-
-                # For IC criteria, lower is better; for entropy,
-                # higher is better
-                _lower_is_better = {
-                    "BIC",
-                    "AIC",
-                    "CAIC",
-                    "SABIC",
-                    "ICL",
-                }
-                if ic_method in _lower_is_better:
-                    best_k = min(ic_scores, key=ic_scores.get)
-                else:
-                    best_k = max(ic_scores, key=ic_scores.get)
-
+                best_k = self._select_best_k(ic_scores, ic_method)
                 best_measurement_model = fitted_models[best_k]
-                best_params = {
-                    "n_components": best_k,
-                    "n_init": n_init,
-                }
 
-                # Build CV-style results table for reporting
-                rows = []
-                for rank, k in enumerate(
-                    sorted(
-                        ic_scores,
-                        key=ic_scores.get,
-                        reverse=(ic_method not in _lower_is_better),
-                    ),
-                    start=1,
-                ):
-                    rows.append(
-                        {
-                            "param_n_components": k,
-                            "param_n_init": n_init,
-                            "mean_test_score": (
-                                -ic_scores[k] if ic_method in _lower_is_better else ic_scores[k]
-                            ),
-                            "rank_test_score": rank,
-                        }
-                    )
-                self.cv_results_ = pd.DataFrame(rows)
+                self.cv_results_ = self._build_results_table(ic_scores, n_init, ic_method)
 
-                # Validate cluster sizes for best model
-                if not self._validate_cluster_sizes(best_measurement_model, X, min_cluster_size):
-                    valid_model = self._find_valid_model(X, min_cluster_size)
-                    if valid_model is not None:
-                        best_measurement_model = valid_model
-                        best_params = {
-                            "n_components": (best_measurement_model.n_components),
-                            "n_init": n_init,
-                        }
-                    else:
-                        labels = best_measurement_model.predict(X)
-                        _, counts = np.unique(labels, return_counts=True)
-                        logger.warning(
-                            f"No model meets "
-                            f"min_cluster_size="
-                            f"{min_cluster_size}. "
-                            f"Proceeding with best k="
-                            f"{best_measurement_model.n_components}"
-                            f" (cluster sizes: "
-                            f"{sorted(counts)}). "
-                            f"Consider reducing "
-                            f"min_cluster_size in config."
-                        )
+                best_measurement_model, best_params = self._apply_cluster_size_validation(
+                    best_measurement_model, X, min_cluster_size, n_init
+                )
 
-                # If structural model specified and Y provided,
-                # fit full model
                 if self._has_structural and Y is not None:
                     self.best_model_ = self._fit_with_structural(X, Y, best_params)
                 else:
                     self.best_model_ = best_measurement_model
 
-                # Compute all criteria for best model
                 self.all_criteria_ = get_all_criteria(self.best_model_, X)
         finally:
             np.seterr(**old_np_settings)
 
         self._is_fitted = True
 
-        best_score = -ic_scores[best_k] if ic_method in _lower_is_better else ic_scores[best_k]
+        best_score = -ic_scores[best_k] if ic_method in _LOWER_IS_BETTER else ic_scores[best_k]
         result_dict = {
             "best_model": self.best_model_,
             "best_params": best_params,
@@ -337,61 +320,33 @@ class StepMixModelSelector:
             "cv_results": self.cv_results_.to_dict(),
         }
 
-        # Add structural parameters if available
         if self.structural_params_ is not None:
             result_dict["structural_params"] = self.structural_params_
 
         result = ModelSelectionResult(**result_dict)
-
         return self.best_model_, result
 
     def _fit_with_structural(self, X: np.ndarray, Y: np.ndarray, best_params: Dict) -> StepMix:
-        """
-        Fit model with structural component using 3-step estimation.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Feature matrix for measurement model
-        Y : np.ndarray
-            Outcome matrix for structural model
-        best_params : Dict
-            Best parameters from model selection
-
-        Returns
-        -------
-        StepMix
-            Fitted model with structural component
-        """
-        # Create model with structural specification
+        """Fit model with structural component using 3-step estimation."""
         model = self._create_base_model(include_structural=True)
         model.set_params(
             **{k: v for k, v in best_params.items() if k in ["n_components", "n_init"]}
         )
 
-        # Fit with both X and Y
         model.fit(X, Y)
 
-        # Extract structural parameters
         try:
             params = model.get_parameters()
             if "structural" in params:
                 self.structural_params_ = params["structural"]
         except AttributeError:
-            # Model doesn't support get_parameters()
             pass
 
         return model
 
     def _find_valid_model(self, X: np.ndarray, min_cluster_size: int) -> Optional[StepMix]:
-        """
-        Find a valid model that meets cluster size constraints.
-
-        Iterates through results in order of score to find first valid model.
-        Returns None if no model meets the constraint.
-        """
+        """Find first model meeting cluster size constraints, by score order."""
         scores = self.cv_results_["mean_test_score"].values
-        # Sort by score descending, skipping NaN/non-finite scores
         finite_mask = np.isfinite(scores)
         sorted_idx = np.argsort(-np.where(finite_mask, scores, -np.inf))
 
@@ -399,7 +354,7 @@ class StepMixModelSelector:
 
         for idx in sorted_idx:
             if not finite_mask[idx]:
-                continue  # Skip models with NaN/inf scores
+                continue
 
             params = {
                 "n_components": self.cv_results_.loc[idx, "param_n_components"],
@@ -414,20 +369,12 @@ class StepMixModelSelector:
                 if self._validate_cluster_sizes(model, X, min_cluster_size):
                     return model
             except (ValueError, RuntimeError):
-                # Model fitting failed (convergence, invalid params)
                 continue
 
         return None
 
     def get_comparison_table(self) -> pd.DataFrame:
-        """
-        Get a formatted comparison table of all evaluated models.
-
-        Returns
-        -------
-        pd.DataFrame
-            Comparison table with key metrics
-        """
+        """Get a formatted comparison table of all evaluated models."""
         if self.cv_results_ is None:
             raise ModelNotFittedError("StepMixModelSelector")
 
@@ -446,26 +393,13 @@ class StepMixModelSelector:
         return df
 
     def get_selection_results(self) -> Dict:
-        """
-        Get model selection results as dictionary.
-
-        Returns
-        -------
-        Dict
-            Dictionary containing:
-            - comparison_table: DataFrame with model comparison
-            - all_criteria: Dict with all information criteria for best model
-            - best_n_clusters: int, optimal number of clusters
-            - criterion: str, selection criterion used
-        """
+        """Get model selection results as dictionary."""
         if not self._is_fitted:
             raise ModelNotFittedError("StepMixModelSelector")
 
         comparison = self.get_comparison_table()
         criterion_name = self.config.criterion
-        # IC scorers negate values for sklearn (higher=better); un-negate for display
-        _ic_criteria = {"BIC", "AIC", "CAIC", "SABIC", "ICL"}
-        sign = -1.0 if criterion_name.upper() in _ic_criteria else 1.0
+        sign = -1.0 if criterion_name.upper() in _LOWER_IS_BETTER else 1.0
         all_results = []
         for _, row in comparison.iterrows():
             all_results.append(

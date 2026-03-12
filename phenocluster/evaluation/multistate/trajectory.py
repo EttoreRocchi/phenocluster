@@ -49,9 +49,6 @@ class TrajectoryBuilder:
                 return s
         return None
 
-    def get_state_labels(self) -> Dict[int, str]:
-        return {s.id: s.name for s in self.states}
-
     def prepare_trajectories(
         self,
         data: pd.DataFrame,
