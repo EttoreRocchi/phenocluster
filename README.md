@@ -141,9 +141,11 @@ PhenoCluster executes the following stages in order:
 
 | Command | Description |
 |---------|-------------|
-| `phenocluster run -d DATA -c CONFIG [--force-rerun]` | Run the full pipeline |
+| `phenocluster run -d DATA -c CONFIG [--force-rerun] [-v] [-q]` | Run the full pipeline |
 | `phenocluster create-config [-p PROFILE] [-o OUTPUT]` | Generate a config YAML from a profile template |
 | `phenocluster validate-config -c CONFIG [-d DATA]` | Validate config structure; cross-check columns against data |
+| `phenocluster list-profiles` | List available configuration profile templates |
+| `phenocluster show-profile NAME` | Print the resolved YAML for a profile with syntax highlighting |
 | `phenocluster version` | Show version, repository link, and documentation link |
 
 ## Configuration profiles
