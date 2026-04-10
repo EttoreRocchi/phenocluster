@@ -241,7 +241,8 @@ class TestCreateConfigCommand:
     def test_invalid_profile(self, tmp_path):
         out = tmp_path / "cfg.yaml"
         result = runner.invoke(app, ["create-config", "-p", "nonexistent", "-o", str(out)])
-        assert result.exit_code == 1
+        # Typer rejects the unknown enum value with a usage error (exit 2).
+        assert result.exit_code != 0
 
 
 class TestValidateConfigCommand:
@@ -273,3 +274,94 @@ class TestVersionCommand:
     def test_version_runs(self):
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
+
+
+class TestRunFlags:
+    @patch("phenocluster.cli.PhenoClusterPipeline")
+    @patch("phenocluster.cli.PhenoClusterConfig.from_yaml")
+    @patch("phenocluster.cli.pd.read_csv")
+    def test_run_quiet_suppresses_banner(self, mock_csv, mock_yaml, mock_pipeline_cls, tmp_path):
+        import pandas as pd
+
+        mock_csv.return_value = pd.DataFrame({"x": [1, 2, 3]})
+        cfg = MagicMock()
+        cfg.project_name = "test"
+        cfg.output_dir = str(tmp_path)
+        cfg.continuous_columns = ["x"]
+        cfg.categorical_columns = []
+        cfg.outcome_columns = []
+        cfg.outcome.enabled = False
+        cfg.model_selection.enabled = False
+        cfg.n_clusters = 3
+        cfg.data_split.test_size = 0.2
+        cfg.stability.enabled = False
+        cfg.survival.enabled = False
+        cfg.multistate.enabled = False
+        cfg.inference.enabled = False
+        cfg.random_state = 42
+        mock_yaml.return_value = cfg
+
+        pipeline_inst = MagicMock()
+        pipeline_inst.fit.return_value = {"n_clusters": 3, "n_samples": 100}
+        mock_pipeline_cls.return_value = pipeline_inst
+
+        data_file = tmp_path / "data.csv"
+        data_file.write_text("x\n1\n2\n3\n")
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("global:\n  project_name: test\n")
+
+        result = runner.invoke(
+            app, ["run", "-d", str(data_file), "-c", str(config_file), "--quiet"]
+        )
+        assert result.exit_code == 0
+        # Banner contains the spaced "P H E N O" text; --quiet should suppress it.
+        assert "P H E N O" not in result.output
+
+    def test_help_panels_present(self):
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        for panel in ("Configuration", "Pipeline", "Info"):
+            assert panel in result.output
+
+    def test_run_help_advertises_verbose_quiet(self):
+        result = runner.invoke(app, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.output
+        assert "--quiet" in result.output
+
+
+class TestListProfilesCommand:
+    def test_list_profiles_runs(self):
+        result = runner.invoke(app, ["list-profiles"])
+        assert result.exit_code == 0
+        for name in ("descriptive", "complete", "quick"):
+            assert name in result.output
+
+
+class TestShowProfileCommand:
+    def test_show_profile_complete(self):
+        result = runner.invoke(app, ["show-profile", "complete"])
+        assert result.exit_code == 0
+        assert "complete" in result.output
+        assert "global" in result.output or "project_name" in result.output
+
+    def test_show_profile_unknown(self):
+        result = runner.invoke(app, ["show-profile", "nonexistent"])
+        assert result.exit_code != 0
+
+
+class TestBackwardsCompatImports:
+    def test_package_level_exports(self):
+        """Legacy symbols must still resolve from `phenocluster.cli`."""
+        from phenocluster.cli import (  # noqa: F401
+            PhenoClusterConfig,
+            PhenoClusterPipeline,
+            _check_columns,
+            _validate_against_data,
+            _validate_multistate_structure,
+            _validate_structure,
+            app,
+            main,
+            pd,
+            typer_click_object,
+        )

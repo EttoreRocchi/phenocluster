@@ -21,6 +21,9 @@ class MultistateAnalyzer:
     Cox proportional hazards for hazard ratio estimation.
     """
 
+    # See SurvivalAnalyzer.MAX_REASONABLE_HR for the rationale: HRs outside
+    # [1/1000, 1000] are flagged as ``unreliable`` (typical signature of
+    # separation or an ill-conditioned transition-specific design matrix).
     MAX_REASONABLE_HR = 1000
 
     def __init__(self, config: PhenoClusterConfig, n_clusters: int, reference_phenotype: int = 0):
@@ -81,7 +84,41 @@ class MultistateAnalyzer:
         time_points=None,
         max_transitions=None,
     ) -> MonteCarloResults:
-        """Estimate state occupation probabilities per phenotype using MC."""
+        """
+        Estimate state occupation probabilities per phenotype using MC.
+
+        Simulates patient trajectories through the multistate model for
+        each phenotype and aggregates them into state-occupation
+        probability curves with bootstrap confidence bands.
+
+        Parameters
+        ----------
+        model
+            Fitted multistate model with per-transition Cox PH fits.
+        trajectories
+            Observed patient trajectories used to seed the simulation.
+        phenotype_indices
+            Mapping of phenotype id to the indices of patients assigned
+            to that phenotype.
+        n_simulations : int, optional
+            Number of Monte Carlo simulations per patient. Defaults to
+            ``multistate_config.monte_carlo_n_simulations`` when ``None``.
+        time_points : sequence of float, optional
+            Time points at which to report state occupation probabilities.
+            Defaults to ``multistate_config.monte_carlo_time_points`` when
+            ``None``.
+        max_transitions : int, optional
+            Maximum number of transitions to simulate per trajectory.
+            Defaults to ``multistate_config.max_transitions_per_path``
+            when ``None``.
+
+        Returns
+        -------
+        MonteCarloResults
+            Container with the evaluated time points, per-phenotype
+            state-occupation probability curves, lower/upper bootstrap
+            bands, the number of simulations, and a simulation summary.
+        """
         self.logger.info("Running Monte Carlo predictions...")
 
         times = time_points or self.multistate_config.monte_carlo_time_points
@@ -186,7 +223,17 @@ class MultistateAnalyzer:
             self.logger.warning(f"No valid trajectories for phenotype {phenotype}")
             return []
 
-        per_patient_sims = max(50, n_sims // len(patient_trajs))
+        per_patient_sims = max(1, -(-n_sims // len(patient_trajs)))
+        floor_per_patient = 50
+        if per_patient_sims < floor_per_patient:
+            self.logger.warning(
+                f"Phenotype {phenotype}: requested {n_sims} simulations spread "
+                f"over {len(patient_trajs)} patients yields "
+                f"{per_patient_sims} sims/patient; raising to {floor_per_patient} "
+                "for stability. Total simulations will exceed the configured "
+                "budget for this phenotype."
+            )
+            per_patient_sims = floor_per_patient
         patient_probs = []
         for traj in patient_trajs:
             try:
@@ -231,7 +278,7 @@ class MultistateAnalyzer:
                 float(np.mean([v[t_idx] for v in vals])) for t_idx in range(len(times))
             ]
 
-        rng = np.random.RandomState(self.config.random_state)
+        rng = np.random.default_rng(self.config.random_state)
         boot_probs: Dict[int, List[List[float]]] = {s: [] for s in all_state_ids}
         for _ in range(n_boot):
             boot_idx = rng.choice(len(patient_probs), len(patient_probs), replace=True)

@@ -11,6 +11,10 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+_CLI_CONSOLE = None
+_CLI_VERBOSE = False
+_CLI_QUIET = False
+
 
 class PhenoClusterLogger:
     """
@@ -78,10 +82,27 @@ class PhenoClusterLogger:
                     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"
                 )
 
-            # Console handler
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(fmt)
-            logger.addHandler(console_handler)
+            # Console handler - use Rich when the CLI has configured a console,
+            # otherwise fall back to a plain stdout StreamHandler.
+            if _CLI_CONSOLE is not None and not _CLI_QUIET:
+                from rich.logging import RichHandler
+
+                console_handler = RichHandler(
+                    console=_CLI_CONSOLE,
+                    show_time=False,
+                    show_path=False,
+                    markup=True,
+                    rich_tracebacks=True,
+                    tracebacks_show_locals=_CLI_VERBOSE,
+                )
+                console_handler.setFormatter(logging.Formatter("%(message)s"))
+                if _CLI_VERBOSE:
+                    logger.setLevel(logging.DEBUG)
+                logger.addHandler(console_handler)
+            elif not _CLI_QUIET:
+                console_handler = logging.StreamHandler(sys.stdout)
+                console_handler.setFormatter(fmt)
+                logger.addHandler(console_handler)
 
             # File handler
             if log_to_file and log_file:
@@ -93,6 +114,21 @@ class PhenoClusterLogger:
 
             cls._loggers[name] = logger
             return logger
+
+    @classmethod
+    def configure_cli(cls, console, verbose: bool = False, quiet: bool = False) -> None:
+        """Wire the logger to a Rich Console for CLI-driven invocations.
+
+        Called from the CLI root callback. Affects loggers created *after*
+        this call; cached loggers are refreshed so the next `get_logger`
+        call re-initialises their handlers.
+        """
+        global _CLI_CONSOLE, _CLI_VERBOSE, _CLI_QUIET
+        _CLI_CONSOLE = console
+        _CLI_VERBOSE = verbose
+        _CLI_QUIET = quiet
+        with cls._lock:
+            cls._loggers.clear()
 
 
 def get_logger(name: str, config=None) -> logging.Logger:

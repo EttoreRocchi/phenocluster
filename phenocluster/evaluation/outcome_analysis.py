@@ -24,7 +24,31 @@ class OutcomeAnalyzer:
     def analyze_outcomes(
         self, df: pd.DataFrame, labels: np.ndarray, reference_phenotype: int = 0
     ) -> Dict[str, Dict]:
-        """Perform outcome association analysis using logistic regression."""
+        """
+        Perform outcome association analysis using logistic regression.
+
+        Fits a logistic regression of each binary outcome in
+        ``config.outcome_columns`` on phenotype dummies, using
+        ``reference_phenotype`` as the reference level. When
+        ``config.inference.fdr_correction`` is enabled, Benjamini-Hochberg
+        FDR is applied globally across all outcome/phenotype p-values.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Patient-level dataframe containing the outcome columns.
+        labels : np.ndarray
+            Hard phenotype assignments aligned with the rows of ``df``.
+        reference_phenotype : int, default 0
+            Phenotype id to use as the logistic regression reference.
+
+        Returns
+        -------
+        Dict[str, Dict]
+            Mapping from outcome column name to its per-phenotype
+            regression results. Returns an empty dict when
+            ``config.outcome_columns`` is not configured.
+        """
         if not self.config.outcome_columns:
             self.logger.info("No outcome columns specified. Skipping outcome analysis.")
             return {}
@@ -49,15 +73,13 @@ class OutcomeAnalyzer:
     def _analyze_single_outcome(self, df, labels, outcome, reference_phenotype):
         """Analyze a single binary outcome."""
         self.logger.info(f"Outcome: {outcome}")
-        y = df[outcome].values
-
-        # Complete-case analysis
-        valid_idx = ~np.isnan(y)
+        # pd.isna handles float, integer, nullable-integer and object dtypes
+        valid_idx = ~pd.isna(df[outcome].values)
         n_missing = int((~valid_idx).sum())
         if n_missing > 0:
-            pct = n_missing / len(y) * 100
+            pct = n_missing / len(valid_idx) * 100
             self.logger.info(f"  Missing: {n_missing} ({pct:.1f}%) - complete-case (MCAR)")
-        y = y[valid_idx].astype(int)
+        y = df[outcome].values[valid_idx].astype(int)
         labels_valid = labels[valid_idx]
 
         unique_vals = np.unique(y)
@@ -151,15 +173,16 @@ class OutcomeAnalyzer:
                         [int((mask_ref & (y == 1)).sum()), int((mask_ref & (y == 0)).sum())],
                     ]
                 )
-                use_fisher = self.config.inference.outcome_test == "fisher" or (
-                    self.config.inference.outcome_test == "auto" and table.min() < 5
-                )
+                outcome_test = self.config.inference.outcome_test
+                small_cells = table.min() < 5
+                use_fisher = outcome_test == "fisher" or (outcome_test == "auto" and small_cells)
                 if use_fisher:
                     _, p_val = stats.fisher_exact(table)
                     method = "Fisher's exact"
                 else:
-                    chi2, p_val, _, _ = stats.chi2_contingency(table, correction=True)
-                    method = "chi-square"
+                    apply_yates = outcome_test == "auto" and small_cells
+                    chi2, p_val, _, _ = stats.chi2_contingency(table, correction=apply_yates)
+                    method = "chi-square (Yates)" if apply_yates else "chi-square"
 
                 if cid not in results:
                     results[cid] = {}

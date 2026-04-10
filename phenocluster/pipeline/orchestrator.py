@@ -6,7 +6,7 @@ Thin orchestrator that coordinates pipeline stages and manages caching.
 """
 
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Callable, Dict, Optional, Union
 
 import pandas as pd
 
@@ -25,6 +25,8 @@ from .stages import (
     PreprocessingStage,
     TrainingStage,
 )
+
+ProgressCallback = Callable[[str, float], None]
 
 
 class PhenoClusterPipeline:
@@ -73,7 +75,12 @@ class PhenoClusterPipeline:
         self._cache: Optional[ArtifactCache] = None
         self._data_hash: Optional[str] = None
 
-    def fit(self, data: pd.DataFrame, force_rerun: bool = False) -> Dict:
+    def fit(
+        self,
+        data: pd.DataFrame,
+        force_rerun: bool = False,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Dict:
         """
         Execute the complete phenotype discovery pipeline.
 
@@ -83,6 +90,10 @@ class PhenoClusterPipeline:
             Input clinical dataset
         force_rerun : bool
             If True, ignore cached artifacts and re-run all steps.
+        progress_callback : callable, optional
+            Callback invoked as ``callback(stage_name, fraction)`` before each
+            stage runs, with ``fraction`` in ``[0.0, 1.0]``. Used by the CLI to
+            drive a Rich progress bar; safe to omit.
 
         Returns
         -------
@@ -99,26 +110,30 @@ class PhenoClusterPipeline:
 
         ctx = PipelineContext(data_raw=data)
 
-        # Steps 0-6: Preprocessing
-        self._run_preprocessing(ctx)
+        stages = [
+            ("Preprocessing", self._run_preprocessing),
+            ("Feature selection", self._run_feature_selection),
+            ("Model training", self._run_training),
+            ("Evaluation", self._run_evaluation),
+            ("Stability analysis", self._run_stability),
+            ("Outcome / survival analyses", self._run_analyses),
+            ("Finalization", self._run_finalization),
+        ]
 
-        # Step 7: Feature selection
-        self._run_feature_selection(ctx)
+        total = len(stages)
+        for idx, (name, fn) in enumerate(stages):
+            if progress_callback is not None:
+                try:
+                    progress_callback(name, idx / total)
+                except Exception:
+                    pass
+            fn(ctx)
 
-        # Step 8: Model training
-        self._run_training(ctx)
-
-        # Steps 9-10: Evaluation (test + full-cohort refit)
-        self._run_evaluation(ctx)
-
-        # Step 9: Stability analysis
-        self._run_stability(ctx)
-
-        # Steps 10-10c: Analyses
-        self._run_analyses(ctx)
-
-        # Steps 11-13: Finalization
-        self._run_finalization(ctx)
+        if progress_callback is not None:
+            try:
+                progress_callback("Done", 1.0)
+            except Exception:
+                pass
 
         return self.results
 
@@ -370,6 +385,7 @@ def run_pipeline(
     data: pd.DataFrame,
     config: Union[PhenoClusterConfig, str, Path],
     force_rerun: bool = False,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> Dict:
     """
     Convenience function to run the complete pipeline.
@@ -389,4 +405,4 @@ def run_pipeline(
         Dictionary containing all pipeline results.
     """
     pipeline = PhenoClusterPipeline(config)
-    return pipeline.fit(data, force_rerun=force_rerun)
+    return pipeline.fit(data, force_rerun=force_rerun, progress_callback=progress_callback)

@@ -76,6 +76,8 @@ class DataSplitter:
 
         strat_col = stratify_column or self.config.stratify_by
         stratify = None
+        stratification_used = False
+        fallback_reason: Optional[str] = None
 
         if strat_col:
             if strat_col not in df.columns:
@@ -84,13 +86,17 @@ class DataSplitter:
 
             # Check if stratification is possible
             unique, counts = np.unique(stratify, return_counts=True)
-            if np.min(counts) < 2:
-                self.logger.warning(
-                    f"Stratification column '{strat_col}' has strata with <2 samples. "
-                    f"Falling back to non-stratified split."
+            min_count = int(np.min(counts))
+            if min_count < 2:
+                fallback_reason = (
+                    f"Stratification column '{strat_col}' has a stratum with "
+                    f"{min_count} sample(s); sklearn requires >=2."
                 )
+                self.logger.warning(f"{fallback_reason} Falling back to non-stratified split.")
                 self._stratification_fallback = True
                 stratify = None
+            else:
+                stratification_used = True
 
         # Split into train and test
         train_idx, test_idx = train_test_split(
@@ -105,5 +111,10 @@ class DataSplitter:
         test_df = df.iloc[test_idx].reset_index(drop=True)
 
         return DataSplitResult(
-            train=train_df, test=test_df, train_indices=train_idx, test_indices=test_idx
+            train=train_df,
+            test=test_df,
+            train_indices=train_idx,
+            test_indices=test_idx,
+            stratification_used=stratification_used,
+            stratification_fallback_reason=fallback_reason,
         )

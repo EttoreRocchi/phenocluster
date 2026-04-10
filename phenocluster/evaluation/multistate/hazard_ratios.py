@@ -8,7 +8,12 @@ import pandas as pd
 from lifelines import CoxPHFitter
 
 from ..stats_utils import apply_fdr_correction, create_phenotype_dummies
-from .types import MIN_TRANSITION_TIME, PatientTrajectory, TransitionResult
+from .types import (
+    MIN_TRANSITION_TIME,
+    TRAJECTORY_FLOOR_WARN_FRACTION,
+    PatientTrajectory,
+    TransitionResult,
+)
 
 
 def extract_hazard_ratios(
@@ -84,6 +89,16 @@ def _fit_single_transition_hr(
         return None
 
     logger.info(f"  Transition {trans.name}: {n_events} events, {n_at_risk} at risk")
+
+    floored_share = float(np.mean(times_arr <= MIN_TRANSITION_TIME)) if n_at_risk else 0.0
+    if floored_share > TRAJECTORY_FLOOR_WARN_FRACTION:
+        logger.warning(
+            f"  Transition {trans.name}: {floored_share * 100:.1f}% of sojourn times "
+            f"are at the MIN_TRANSITION_TIME floor ({MIN_TRANSITION_TIME}). "
+            "These records are treated as tied events by the Efron correction; "
+            "Cox HRs may be biased if the floor is much larger than your true "
+            "measurement granularity."
+        )
 
     _, non_ref_ids = create_phenotype_dummies(phen_arr, n_clusters, reference=reference_phenotype)
 

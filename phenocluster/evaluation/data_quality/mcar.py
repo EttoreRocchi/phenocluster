@@ -1,7 +1,7 @@
 """Little's MCAR (Missing Completely at Random) test."""
 
 import warnings
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -59,9 +59,22 @@ def littles_mcar_test(data: pd.DataFrame) -> Dict:
     )
     unique_patterns = pattern_strings.unique()
 
-    chi_square, df = _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns)
+    chi_square, df, status = _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns)
 
-    p_value = 1 - stats.chi2.cdf(chi_square, df)
+    if status != "ok":
+        return {
+            "chi_square": float(chi_square) if np.isfinite(chi_square) else np.nan,
+            "dof": int(df) if df > 0 else 0,
+            "p_value": np.nan,
+            "is_mcar": None,
+            "n_patterns": int(len(unique_patterns)),
+            "interpretation": (
+                "Little's MCAR test undefined: insufficient observed values per "
+                "pattern to form a positive degrees-of-freedom statistic."
+            ),
+        }
+
+    p_value = float(stats.chi2.sf(chi_square, df))
     alpha = 0.05
     is_mcar = p_value > alpha
 
@@ -145,18 +158,121 @@ def _validate_mcar_input(data: pd.DataFrame) -> Optional[Dict]:
     return None
 
 
-def _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns):
-    """Compute chi-square statistic and degrees of freedom for MCAR test."""
-    n_vars = numeric_data.shape[1]
-    overall_means = numeric_data.mean()
-    cov_matrix = numeric_data.cov()
+def _em_mvn_estimates(
+    data: np.ndarray,
+    max_iter: int = 200,
+    tol: float = 1e-6,
+) -> Tuple[np.ndarray, np.ndarray, bool]:
+    """Maximum-likelihood mean and covariance for multivariate normal data with missingness.
 
-    try:
-        np.linalg.inv(cov_matrix.values)
-    except np.linalg.LinAlgError:
+    Parameters
+    ----------
+    data : np.ndarray, shape (n, p)
+        Numeric data with NaN entries marking missing values.
+    max_iter : int
+        Maximum number of EM iterations.
+    tol : float
+        Convergence tolerance on the maximum absolute parameter change.
+
+    Returns
+    -------
+    mu : np.ndarray, shape (p,)
+        ML estimate of the mean.
+    sigma : np.ndarray, shape (p, p)
+        ML estimate of the covariance matrix.
+    converged : bool
+        True if EM converged within ``max_iter`` iterations.
+    """
+    n, p = data.shape
+    obs_mask = ~np.isnan(data)
+
+    # Initialise from column means (mean imputation) and sample covariance.
+    col_means = np.nanmean(data, axis=0)
+    col_means = np.where(np.isnan(col_means), 0.0, col_means)
+    filled = np.where(obs_mask, data, col_means)
+    mu = filled.mean(axis=0)
+    centred = filled - mu
+    sigma = (centred.T @ centred) / max(n - 1, 1)
+    # Regularise on the diagonal so the initial covariance is invertible.
+    eps = 1e-8 * (np.trace(sigma) / p + 1.0)
+    sigma = sigma + eps * np.eye(p)
+
+    converged = False
+    for _ in range(max_iter):
+        T1 = np.zeros(p)
+        T2 = np.zeros((p, p))
+
+        for i in range(n):
+            obs_i = obs_mask[i]
+            mis_i = ~obs_i
+            x_i = data[i].copy()
+
+            if mis_i.any():
+                if obs_i.any():
+                    sigma_oo = sigma[np.ix_(obs_i, obs_i)]
+                    sigma_mo = sigma[np.ix_(mis_i, obs_i)]
+                    sigma_mm = sigma[np.ix_(mis_i, mis_i)]
+                    try:
+                        sigma_oo_inv = np.linalg.inv(sigma_oo)
+                    except np.linalg.LinAlgError:
+                        sigma_oo_inv = np.linalg.pinv(sigma_oo)
+                    cond_mean = mu[mis_i] + sigma_mo @ sigma_oo_inv @ (x_i[obs_i] - mu[obs_i])
+                    cond_cov = sigma_mm - sigma_mo @ sigma_oo_inv @ sigma_mo.T
+                    x_i[mis_i] = cond_mean
+                else:
+                    cond_mean = mu[mis_i]
+                    cond_cov = sigma[np.ix_(mis_i, mis_i)]
+                    x_i[mis_i] = cond_mean
+
+                outer = np.outer(x_i, x_i)
+                ix_mm = np.ix_(mis_i, mis_i)
+                outer[ix_mm] = outer[ix_mm] + cond_cov
+                T2 += outer
+            else:
+                T2 += np.outer(x_i, x_i)
+
+            T1 += x_i
+
+        new_mu = T1 / n
+        new_sigma = T2 / n - np.outer(new_mu, new_mu)
+
+        delta = max(
+            float(np.max(np.abs(new_mu - mu))),
+            float(np.max(np.abs(new_sigma - sigma))),
+        )
+        mu = new_mu
+        sigma = new_sigma
+        if delta < tol:
+            converged = True
+            break
+
+    return mu, sigma, converged
+
+
+def _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns):
+    """Compute Little's chi-square statistic and degrees of freedom.
+
+    Returns
+    -------
+    chi_square : float
+        Little's d² statistic.
+    df : int
+        Degrees of freedom (`Σ_g k_g - k`, where `k_g` is the number of
+        observed variables in pattern `g` and `k` is the total number of
+        variables).
+    status : str
+        `"ok"` if the statistic is well defined, otherwise a short reason.
+    """
+    columns = list(numeric_data.columns)
+    col_to_idx = {c: i for i, c in enumerate(columns)}
+    n_vars = numeric_data.shape[1]
+    data_arr = numeric_data.to_numpy(dtype=float, copy=True)
+
+    mu_hat, sigma_hat, em_converged = _em_mvn_estimates(data_arr)
+    if not em_converged:
         warnings.warn(
-            "Covariance matrix is singular; using pseudoinverse. "
-            "MCAR test results may be unreliable.",
+            "EM for Little's MCAR test did not converge within the iteration "
+            "limit; reported statistic uses the last EM estimate.",
             stacklevel=2,
         )
 
@@ -165,26 +281,34 @@ def _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns):
 
     for pattern in unique_patterns:
         pattern_mask = pattern_strings == pattern
-        n_pattern = pattern_mask.sum()
+        n_pattern = int(pattern_mask.sum())
         if n_pattern < 2:
             continue
 
-        pattern_data = numeric_data.loc[pattern_mask]
-        observed_vars = [numeric_data.columns[i] for i, char in enumerate(pattern) if char == "0"]
+        observed_vars = [columns[i] for i, char in enumerate(pattern) if char == "0"]
         if len(observed_vars) < 1:
             continue
 
-        pattern_means = pattern_data[observed_vars].mean()
-        cov_sub = cov_matrix.loc[observed_vars, observed_vars]
+        obs_idx = np.array([col_to_idx[c] for c in observed_vars])
+        pattern_data = data_arr[pattern_mask.values][:, obs_idx]
+        pattern_means = pattern_data.mean(axis=0)
 
+        sigma_sub = sigma_hat[np.ix_(obs_idx, obs_idx)]
         try:
-            cov_sub_inv = np.linalg.inv(cov_sub.values)
+            sigma_sub_inv = np.linalg.inv(sigma_sub)
         except np.linalg.LinAlgError:
-            cov_sub_inv = np.linalg.pinv(cov_sub.values)
+            warnings.warn(
+                "Covariance submatrix is singular for one or more missing patterns; "
+                "using pseudoinverse. MCAR test results may be unreliable.",
+                stacklevel=2,
+            )
+            sigma_sub_inv = np.linalg.pinv(sigma_sub)
 
-        mean_diff = pattern_means.values - overall_means[observed_vars].values
-        chi_square += n_pattern * np.dot(np.dot(mean_diff, cov_sub_inv), mean_diff)
+        mean_diff = pattern_means - mu_hat[obs_idx]
+        chi_square += n_pattern * float(mean_diff @ sigma_sub_inv @ mean_diff)
         df_total += len(observed_vars)
 
-    df = max(1, df_total - n_vars)
-    return chi_square, df
+    df = df_total - n_vars
+    if df <= 0:
+        return chi_square, max(df_total - n_vars, 0), "insufficient_dof"
+    return chi_square, df, "ok"

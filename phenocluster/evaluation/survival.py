@@ -13,6 +13,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 from lifelines import CoxPHFitter, KaplanMeierFitter, NelsonAalenFitter
+from scipy import stats
 
 from ..config import PhenoClusterConfig
 from ..utils.logging import get_logger
@@ -21,6 +22,12 @@ from ..utils.logging import get_logger
 class SurvivalAnalyzer:
     """Compare cluster survival using KM curves and Cox PH models."""
 
+    # Sanity bound used to flag (not discard) implausible Cox PH point
+    # estimates. A hazard ratio of 1000 corresponds to a log-HR of ~6.9; in
+    # clinical survival data this almost always indicates separation, an
+    # ill-conditioned design matrix, or a fitting failure rather than a true
+    # effect. Estimates outside [1/MAX_REASONABLE_HR, MAX_REASONABLE_HR] are
+    # tagged ``unreliable=True``, but the underlying coefficient is left intact.
     MAX_REASONABLE_HR = 1000
 
     def __init__(self, config: PhenoClusterConfig, n_clusters: int, reference_phenotype: int = 0):
@@ -36,7 +43,31 @@ class SurvivalAnalyzer:
         time_column: str,
         event_column: str,
     ) -> Dict:
-        """Perform full survival analysis: KM/NA curves, log-rank, Cox PH."""
+        """
+        Perform full survival analysis: KM/NA curves, log-rank, Cox PH.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Patient-level dataframe containing follow-up time and event columns.
+        labels : np.ndarray
+            Hard phenotype assignments aligned with the rows of ``data``.
+        time_column : str
+            Name of the follow-up time column in ``data``.
+        event_column : str
+            Name of the binary event indicator column in ``data``
+            (1 = event, 0 = censored).
+
+        Returns
+        -------
+        Dict
+            Results dictionary with keys ``survival_data`` (Kaplan-Meier
+            fits), ``nelson_aalen_data``, ``comparison`` (Cox PH and
+            pairwise log-rank), ``median_survival``, ``survival_at_times``,
+            ``ph_diagnostics``, ``ph_violated``, ``time_column``,
+            ``event_column``, and ``logrank_p_value``. Returns an empty
+            dict when no valid survival data is available.
+        """
         self.logger.info("SURVIVAL ANALYSIS")
         survival_data = self._prepare_data(data, labels, time_column, event_column)
         if survival_data is None:
@@ -74,7 +105,42 @@ class SurvivalAnalyzer:
         event_column: str,
         min_weight: float = 0.01,
     ) -> Dict:
-        """Perform weighted survival analysis using posterior probabilities."""
+        """
+        Perform weighted survival analysis using posterior probabilities.
+
+        Each patient contributes to every phenotype with a weight equal to
+        their posterior probability of belonging to it, rather than being
+        assigned to a single hard cluster.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Patient-level dataframe containing follow-up time and event columns.
+        posterior_probs : np.ndarray
+            Array of shape ``(n_samples, n_clusters)`` with posterior
+            phenotype probabilities. Rows must align with ``data``; columns
+            must match ``self.n_clusters``.
+        time_column : str
+            Name of the follow-up time column in ``data``.
+        event_column : str
+            Name of the binary event indicator column in ``data``.
+        min_weight : float, default 0.01
+            Samples with posterior weight below this threshold for a given
+            phenotype are dropped from that phenotype's weighted fit.
+
+        Returns
+        -------
+        Dict
+            Weighted survival results including weighted KM curves,
+            median survival estimates, and pairwise comparisons. Returns
+            an empty dict when no valid rows remain after filtering.
+
+        Raises
+        ------
+        ValueError
+            If ``posterior_probs`` has a row count that does not match
+            ``data`` or a column count that does not match ``n_clusters``.
+        """
         self.logger.info("WEIGHTED SURVIVAL ANALYSIS")
         self._validate_columns(data, time_column, event_column)
         if posterior_probs.shape[0] != len(data):
@@ -309,8 +375,53 @@ def _fit_km_for_cluster(cluster_data, time_col, event_col, cluster_id):
     }
 
 
+def _grambsch_therneau_global(cph, cox_df, transform="log"):
+    """Compute the Grambsch-Therneau global Schoenfeld test.
+
+    Implements the Grambsch & Therneau global statistic:
+
+    .. math:: T = \\frac{1}{d}\\, G^T I^{-1} G
+
+    where :math:`G` is the vector of covariance-weighted sums of scaled
+    Schoenfeld residuals over the :math:`d` distinct event times,
+    :math:`I` is the information matrix on the normalised scale, and the
+    time-transform values are centred via
+    :math:`\\text{scalar} = \\sum g^2 - (\\sum g)^2 / d`.
+    """
+    schoenfeld = cph.compute_residuals(cox_df, kind="schoenfeld")
+    d = schoenfeld.shape[0]
+    p = schoenfeld.shape[1]
+    if d == 0 or p == 0:
+        return None
+
+    event_times = schoenfeld.index.values
+    if transform == "log":
+        g = np.log(event_times)
+    else:
+        g = np.asarray(event_times, dtype=float)
+
+    r = schoenfeld.values
+    Gr = (g[:, None] * r).sum(axis=0)
+    scalar = float((g**2).sum() - (g.sum() ** 2) / d)
+    if scalar <= 0:
+        return None
+
+    norm_std = cph._norm_std.values
+    V_normalised = cph.variance_matrix_.values * np.outer(norm_std, norm_std)
+    try:
+        I_normalised = np.linalg.inv(V_normalised)
+    except np.linalg.LinAlgError:
+        I_normalised = np.linalg.pinv(V_normalised)
+
+    T_global = float((Gr @ I_normalised @ Gr) / (scalar * d))
+    p_value = float(stats.chi2.sf(T_global, df=p))
+    return {"test_statistic": T_global, "df": int(p), "p_value": p_value}
+
+
 def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logger):
-    """Check PH assumption using lifelines diagnostics."""
+    """Check PH assumption using lifelines' Schoenfeld-residual test."""
+    from lifelines.statistics import proportional_hazard_test
+
     logger.info("  Checking proportional hazards assumption...")
     ph = {"tested": False, "violations": [], "summary": ""}
     try:
@@ -325,21 +436,69 @@ def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logg
 
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                test_results = cph.check_assumptions(cox_df, p_value_threshold=0.05)
+                test_results = proportional_hazard_test(cph, cox_df, time_transform="rank")
         except Exception:
             test_results = None
 
+        try:
+            global_test = _grambsch_therneau_global(cph, cox_df, transform="log")
+        except Exception as e:
+            logger.debug(f"  Global Grambsch-Therneau computation failed: {e}")
+            global_test = None
+
         ph["tested"] = True
-        if test_results is not None and len(test_results) > 0:
-            for cov, rdf in test_results:
-                ph["violations"].append({"covariate": cov, "test_stat": "see log"})
-                logger.warning(f"  PH may be violated for: {cov}")
-            ph["summary"] = f"PH potentially violated for {len(ph['violations'])} covariate(s)."
-            ph["ph_violated"] = True
+        if test_results is not None and hasattr(test_results, "summary"):
+            summary = test_results.summary
+            covariates = list(summary.index)
+            raw_p = [float(summary.loc[c, "p"]) for c in covariates]
+            test_statistics = [float(summary.loc[c, "test_statistic"]) for c in covariates]
+
+            ph["per_covariate"] = [
+                {"covariate": cov, "test_statistic": ts, "p_value": p}
+                for cov, ts, p in zip(covariates, test_statistics, raw_p)
+            ]
+
+            ph["global_test"] = global_test
+            global_stat = global_test["test_statistic"] if global_test else None
+            global_df = global_test["df"] if global_test else None
+            global_p = global_test["p_value"] if global_test else None
+
+            for entry in ph["per_covariate"]:
+                if entry["p_value"] < 0.05:
+                    ph["violations"].append(
+                        {
+                            "covariate": entry["covariate"],
+                            "test_statistic": entry["test_statistic"],
+                            "p_value": entry["p_value"],
+                        }
+                    )
+                    logger.warning(
+                        f"  PH may be violated for: {entry['covariate']} "
+                        f"(raw p={entry['p_value']:.4f})"
+                    )
+
+            if global_p is not None and global_p < 0.05:
+                ph["summary"] = (
+                    f"Global Schoenfeld test rejects PH "
+                    f"(chi2={global_stat:.2f}, df={global_df}, p={global_p:.4f})."
+                )
+                ph["ph_violated"] = True
+                logger.warning(f"  {ph['summary']}")
+            elif ph["violations"]:
+                ph["summary"] = (
+                    f"Global PH test not rejected, but raw per-covariate "
+                    f"Schoenfeld p<0.05 for {len(ph['violations'])} covariate(s) "
+                    "(exploratory; not multiplicity-adjusted)."
+                )
+                ph["ph_violated"] = False
+                logger.info(f"  {ph['summary']}")
+            else:
+                ph["summary"] = "No PH violation detected (global Schoenfeld test)."
+                ph["ph_violated"] = False
+                logger.info(f"  {ph['summary']}")
         else:
-            ph["summary"] = "No PH violation detected."
-            ph["ph_violated"] = False
-            logger.info(f"  {ph['summary']}")
+            ph["summary"] = "PH diagnostic returned no results."
+            ph["ph_violated"] = None
     except Exception as e:
         logger.debug(f"  PH check skipped: {e}")
         ph["summary"] = f"PH check skipped: {e}"

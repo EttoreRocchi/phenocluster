@@ -29,7 +29,7 @@ def _assign_feature_group(name: str, config: FeatureCharacterizationConfig) -> s
 
 
 class FeatureCharacterizer:
-    """Compute effect sizes (Cohen's d, Cramer's V) per cluster."""
+    """Compute effect sizes (Hedges' g*, Cramer's V) per cluster."""
 
     def __init__(self, config: PhenoClusterConfig, n_clusters: int):
         self.config = config
@@ -37,7 +37,29 @@ class FeatureCharacterizer:
         self.logger = get_logger("evaluation", config)
 
     def compute_feature_importance(self, df: pd.DataFrame, labels: np.ndarray) -> Dict[str, Dict]:
-        """Compute feature importance / effect sizes for each cluster."""
+        """
+        Compute feature importance / effect sizes for each cluster.
+
+        Continuous features are characterised with Hedges' g\\* (Welch-
+        consistent) against the pooled complement; categorical features
+        use Cramer's V. When ``config.inference.fdr_correction`` is
+        enabled, Benjamini-Hochberg FDR is applied across all tests.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Feature dataframe containing the columns declared in
+            ``config.continuous_columns`` and ``config.categorical_columns``.
+        labels : np.ndarray
+            Hard cluster assignments aligned with the rows of ``df``.
+
+        Returns
+        -------
+        Dict[str, Dict]
+            Dictionary with keys ``continuous`` (per-feature per-cluster
+            Hedges' g\\* entries), ``categorical`` (per-feature Cramer's V
+            entries), and ``summary`` (aggregated top features per cluster).
+        """
         self.logger.info("DESCRIPTIVE FEATURE CHARACTERIZATION")
         results = {"continuous": {}, "categorical": {}, "summary": {}}
 
@@ -55,15 +77,15 @@ class FeatureCharacterizer:
         return results
 
     def _continuous_effects(self, df, labels):
-        """Compute Cohen's d for each continuous feature per cluster."""
-        self.logger.info("Continuous Features (Cohen's d effect sizes):")
+        """Compute Hedges' g* for each continuous feature per cluster."""
+        self.logger.info("Continuous Features (Hedges' g* effect sizes):")
         result = {}
         for col in self.config.continuous_columns:
             if col not in df.columns:
                 continue
             feature_results = {}
             for cid in range(self.n_clusters):
-                entry = self._cohens_d(df, labels, col, cid)
+                entry = self._hedges_g_star(df, labels, col, cid)
                 if entry is not None:
                     feature_results[cid] = entry
             result[col] = feature_results
@@ -73,12 +95,14 @@ class FeatureCharacterizer:
                 if abs(best[1]["effect_size"]) >= 0.2:
                     self.logger.info(
                         f"  {col}: Cluster {best[0]} {best[1]['magnitude']} "
-                        f"(d={best[1]['effect_size']:.2f}, {best[1]['direction']})"
+                        f"(g*={best[1]['effect_size']:.2f}, {best[1]['direction']})"
                     )
         return result
 
-    def _cohens_d(self, df, labels, col, cluster_id):
-        """Compute Cohen's d for one feature in one cluster vs rest."""
+    def _hedges_g_star(self, df, labels, col, cluster_id):
+        """Compute Hedges' g* (small-sample-corrected) effect size with Welch variance
+        for a cluster vs. rest comparison on a single continuous feature.
+        """
         mask = labels == cluster_id
         c_data = df.loc[mask, col].dropna()
         r_data = df.loc[~mask, col].dropna()
@@ -86,20 +110,37 @@ class FeatureCharacterizer:
             return None
 
         n1, n2 = len(c_data), len(r_data)
-        pooled = np.sqrt(
-            ((n1 - 1) * c_data.std(ddof=1) ** 2 + (n2 - 1) * r_data.std(ddof=1) ** 2)
-            / (n1 + n2 - 2)
-        )
-        if pooled == 0:
+        s1 = float(c_data.std(ddof=1))
+        s2 = float(r_data.std(ddof=1))
+        s_avg = np.sqrt((s1**2 + s2**2) / 2.0)
+
+        scale = max(abs(float(c_data.mean())), abs(float(r_data.mean())), 1.0)
+        if s_avg < 1e-12 * scale:
             return None
 
-        d = (c_data.mean() - r_data.mean()) / pooled
-        abs_d = abs(d)
-        if abs_d >= 0.8:
+        mean_diff = float(c_data.mean()) - float(r_data.mean())
+        d_welch = mean_diff / s_avg
+
+        # Welch–Satterthwaite degrees of freedom
+        denom = (s1**2 / n1) ** 2 / (n1 - 1) + (s2**2 / n2) ** 2 / (n2 - 1)
+        if denom > 0:
+            df_w = ((s1**2 / n1) + (s2**2 / n2)) ** 2 / denom
+        else:
+            df_w = float(n1 + n2 - 2)
+
+        # Hedges' small-sample correction J(df) ~= 1 - 3 / (4*df - 1)
+        if df_w > 0.25:
+            j_correction = 1.0 - 3.0 / (4.0 * df_w - 1.0)
+        else:
+            j_correction = 1.0
+        g_star = j_correction * d_welch
+
+        abs_g = abs(g_star)
+        if abs_g >= 0.8:
             mag = "large"
-        elif abs_d >= 0.5:
+        elif abs_g >= 0.5:
             mag = "medium"
-        elif abs_d >= 0.2:
+        elif abs_g >= 0.2:
             mag = "small"
         else:
             mag = "negligible"
@@ -108,13 +149,16 @@ class FeatureCharacterizer:
         _, p_value = stats.ttest_ind(c_data, r_data, equal_var=False)
 
         return {
-            "effect_size": float(d),
-            "direction": "higher" if d > 0 else "lower",
+            "effect_size": float(g_star),
+            "effect_size_metric": "hedges_g_star_welch",
+            "direction": "higher" if g_star > 0 else "lower",
             "magnitude": mag,
             "cluster_mean": float(c_data.mean()),
             "rest_mean": float(r_data.mean()),
-            "cluster_std": float(c_data.std(ddof=1)),
-            "pooled_std": float(pooled),
+            "cluster_std": s1,
+            "rest_std": s2,
+            "average_std": float(s_avg),
+            "welch_df": float(df_w),
             "n_samples": n1,
             "p_value": float(p_value),
         }

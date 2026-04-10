@@ -72,6 +72,10 @@ include = ["phenocluster*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Upstream issue: sklearn KNNImputer triggers a numpy.ma deprecation (NumPy 1.25+).
+    "ignore:Conversion of an array with ndim > 0 to a scalar is deprecated:DeprecationWarning:numpy\\.ma\\.extras",
+]
 
 [tool.ruff]
 target-version = "py311"

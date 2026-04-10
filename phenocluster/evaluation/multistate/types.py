@@ -7,6 +7,7 @@ import pandas as pd
 
 RIGHT_CENSORING = 0
 MIN_TRANSITION_TIME = 0.001
+TRAJECTORY_FLOOR_WARN_FRACTION = 0.05
 
 
 @dataclass

@@ -51,22 +51,29 @@ class DataSplitResult:
         test: DataFrameType,
         train_indices: ArrayType,
         test_indices: ArrayType,
+        stratification_used: bool = False,
+        stratification_fallback_reason: Optional[str] = None,
     ):
         self.train = train
         self.test = test
         self.train_indices = train_indices
         self.test_indices = test_indices
+        self.stratification_used = stratification_used
+        self.stratification_fallback_reason = stratification_fallback_reason
 
     @property
     def n_train(self) -> int:
+        """Number of samples in the training set."""
         return len(self.train)
 
     @property
     def n_test(self) -> int:
+        """Number of samples in the test set."""
         return len(self.test)
 
     @property
     def train_fraction(self) -> float:
+        """Fraction of samples assigned to the training set (``n_train / n_total``)."""
         return self.n_train / (self.n_train + self.n_test)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -75,4 +82,6 @@ class DataSplitResult:
             "n_train": self.n_train,
             "n_test": self.n_test,
             "train_fraction": self.train_fraction,
+            "stratification_used": self.stratification_used,
+            "stratification_fallback_reason": self.stratification_fallback_reason,
         }

@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.optimize import linear_sum_assignment
+from scipy.stats import norm
 from tqdm import tqdm
 
 from ..config import PhenoClusterConfig
@@ -82,6 +83,34 @@ def _run_single_consensus_iteration(
 
     except Exception:
         return None, None, "failed"
+
+
+def _logit_ci(scores, mean_val, level=0.95):
+    """Logit-transformed Wald CI for a [0, 1]-bounded mean.
+
+    Computes the SE of the mean of ``scores``, maps the point
+    estimate to logit space, builds a normal-approximation CI there, and maps
+    back. Avoids the boundary degeneracy of the raw Wald interval clipped at
+    [0, 1] for stability proportions.
+    """
+    arr = np.asarray(scores, dtype=float)
+    if arr.size < 2:
+        return float(max(0.0, min(1.0, mean_val))), float(max(0.0, min(1.0, mean_val)))
+
+    se = float(np.std(arr, ddof=1)) / np.sqrt(arr.size)
+    if se == 0.0:
+        return float(mean_val), float(mean_val)
+
+    eps = 1e-6
+    p = float(min(max(mean_val, eps), 1.0 - eps))
+    logit_p = np.log(p / (1.0 - p))
+    # delta-method SE on the logit scale
+    se_logit = se / (p * (1.0 - p))
+    # two-sided normal quantile for the requested confidence level
+    z = float(norm.ppf(0.5 + level / 2.0))
+    lo = logit_p - z * se_logit
+    hi = logit_p + z * se_logit
+    return float(1.0 / (1.0 + np.exp(-lo))), float(1.0 / (1.0 + np.exp(-hi)))
 
 
 def _align_labels(reference_labels, predicted_labels, n_clusters):
@@ -357,7 +386,7 @@ class StabilityAnalyzer:
         stability_scores = stability_values[triu_idx]
 
         mean_val = float(np.mean(stability_scores))
-        std_val = float(np.std(stability_scores))
+        std_val = float(np.std(stability_scores, ddof=1)) if stability_scores.size > 1 else 0.0
 
         per_run_scores = []
         for indices, labels_sub, status in results:
@@ -367,10 +396,7 @@ class StabilityAnalyzer:
                 run_stability = float(np.mean(np.abs(run_pairs[triu] - 0.5) * 2))
                 per_run_scores.append(run_stability)
 
-        per_run_arr = np.array(per_run_scores)
-        se = float(np.std(per_run_arr)) / np.sqrt(len(per_run_arr))
-        ci_lower = max(0.0, float(mean_val - 1.96 * se))
-        ci_upper = min(1.0, float(mean_val + 1.96 * se))
+        ci_lower, ci_upper = _logit_ci(per_run_scores, mean_val)
 
         return {
             "mean": mean_val,
@@ -478,14 +504,10 @@ class StabilityAnalyzer:
         for cluster_id in range(n_clusters):
             if cluster_consistency[cluster_id]:
                 scores = cluster_consistency[cluster_id]
-                mean_consistency = np.mean(scores)
-                std_consistency = np.std(scores)
+                mean_consistency = float(np.mean(scores))
+                std_consistency = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
 
-                # Calculate 95% CI
-                n_scores = len(scores)
-                se_consistency = std_consistency / np.sqrt(n_scores)
-                ci_95_lower = max(0.0, float(mean_consistency - 1.96 * se_consistency))
-                ci_95_upper = min(1.0, float(mean_consistency + 1.96 * se_consistency))
+                ci_95_lower, ci_95_upper = _logit_ci(scores, mean_consistency)
 
                 results[cluster_id] = {
                     "mean_consistency": float(mean_consistency),
