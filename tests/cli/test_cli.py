@@ -1,5 +1,6 @@
 """Tests for the CLI module."""
 
+import re
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -11,6 +12,13 @@ from phenocluster.cli import (
     _validate_structure,
     app,
 )
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 runner = CliRunner()
 
@@ -326,8 +334,9 @@ class TestRunFlags:
     def test_run_help_advertises_verbose_quiet(self):
         result = runner.invoke(app, ["run", "--help"])
         assert result.exit_code == 0
-        assert "--verbose" in result.output
-        assert "--quiet" in result.output
+        output = _strip_ansi(result.output)
+        assert "--verbose" in output
+        assert "--quiet" in output
 
 
 class TestListProfilesCommand:
