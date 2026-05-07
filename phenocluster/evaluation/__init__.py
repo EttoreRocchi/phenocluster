@@ -10,6 +10,11 @@ from .cluster_statistics import ClusterStatistics
 from .data_quality import DataQualityAssessor, littles_mcar_test
 from .external_validation import ExternalValidator
 from .feature_characterization import FeatureCharacterizer
+from .generalizability import (
+    CohortReport,
+    GeneralizabilityEvaluator,
+    GeneralizabilityReport,
+)
 from .metrics import ClusterEvaluator
 from .multistate import MonteCarloResults, MultistateAnalyzer, MultistateResults
 from .outcome_analysis import OutcomeAnalyzer
@@ -28,5 +33,8 @@ __all__ = [
     "MonteCarloResults",
     "DataQualityAssessor",
     "ExternalValidator",
+    "GeneralizabilityEvaluator",
+    "GeneralizabilityReport",
+    "CohortReport",
     "littles_mcar_test",
 ]

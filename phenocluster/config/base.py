@@ -1,5 +1,5 @@
 """
-PhenoCluster Configuration — Main Config Class
+PhenoCluster Configuration - Main Config Class
 ================================================
 
 Dataclass-based configuration management for the pipeline.
@@ -59,6 +59,15 @@ from .data import (
     OutlierConfig,
     RowFilterConfig,
 )
+from .generalizability import (
+    CalibrationSubConfig,
+    DriftSubConfig,
+    ExternalCohortSpec,
+    GeneralizabilityConfig,
+    MultiSiteSpec,
+    OutcomeConcordanceSubConfig,
+    TemporalSpec,
+)
 from .model import (
     FeatureSelectionConfig,
     ModelSelectionConfig,
@@ -103,6 +112,39 @@ def _propagate_random_state(random_state: int, dicts: list) -> None:
     """Set ``random_state`` in each sub-config dict (internal propagation)."""
     for d in dicts:
         d["random_state"] = random_state
+
+
+def _build_generalizability_config(d: dict) -> "GeneralizabilityConfig":
+    """Construct GeneralizabilityConfig from a (possibly nested) dict.
+
+    Translates the nested YAML layout (``temporal``, ``multisite``,
+    ``calibration``, ``drift``, ``outcome_concordance``,
+    ``external_cohorts``) into the corresponding dataclass instances.
+    """
+    if not d:
+        return GeneralizabilityConfig()
+    payload = dict(d)
+    temporal_d = payload.pop("temporal", None)
+    multisite_d = payload.pop("multisite", None)
+    calibration_d = payload.pop("calibration", None)
+    drift_d = payload.pop("drift", None)
+    concordance_d = payload.pop("outcome_concordance", None)
+    external_d = payload.pop("external_cohorts", None)
+
+    kwargs = dict(payload)
+    if temporal_d:
+        kwargs["temporal"] = TemporalSpec(**temporal_d)
+    if multisite_d:
+        kwargs["multisite"] = MultiSiteSpec(**multisite_d)
+    if calibration_d:
+        kwargs["calibration"] = CalibrationSubConfig(**calibration_d)
+    if drift_d:
+        kwargs["drift"] = DriftSubConfig(**drift_d)
+    if concordance_d:
+        kwargs["outcome_concordance"] = OutcomeConcordanceSubConfig(**concordance_d)
+    if external_d:
+        kwargs["external_cohorts"] = [ExternalCohortSpec(**item) for item in external_d]
+    return GeneralizabilityConfig(**kwargs)
 
 
 def _unpack_multistate_monte_carlo(ms_dict: dict) -> None:
@@ -171,9 +213,16 @@ class PhenoClusterConfig:
     reference_phenotype: ReferenceConfig = field(default_factory=ReferenceConfig)
     external_validation: ExternalValidationConfig = field(default_factory=ExternalValidationConfig)
 
+    # Generalizability (v0.3.0)
+    generalizability: GeneralizabilityConfig = field(default_factory=GeneralizabilityConfig)
+
     # Output
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+
+    # Whether to render the static HTML analysis report at the end of a run.
+    # Independent of JSON/CSV outputs and Plotly figure HTML files.
+    generate_html_report: bool = True
 
     @property
     def outcome_columns(self) -> List[str]:
@@ -184,6 +233,56 @@ class PhenoClusterConfig:
         """Validate config for pipeline execution. Raises ValueError on issues."""
         if not self.continuous_columns and not self.categorical_columns:
             raise ValueError("Must specify at least one continuous or categorical column")
+        self._check_target_column_collision()
+
+    def outcome_like_columns(self) -> List[str]:
+        """Return every column name treated as an outcome by some downstream stage.
+
+        Includes binary outcome columns (``outcome.outcome_columns``) and the
+        time/event columns of every survival target. Used by the
+        feature-selection collision check. External-cohort columns are not
+        included here because they are only known at runtime.
+        """
+        names: List[str] = []
+        if self.outcome and getattr(self.outcome, "outcome_columns", None):
+            names.extend(self.outcome.outcome_columns)
+        if self.survival and getattr(self.survival, "targets", None):
+            for tgt in self.survival.targets:
+                tc = getattr(tgt, "time_column", None)
+                ec = getattr(tgt, "event_column", None)
+                if tc:
+                    names.append(tc)
+                if ec:
+                    names.append(ec)
+        seen: List[str] = []
+        for n in names:
+            if n and n not in seen:
+                seen.append(n)
+        return seen
+
+    def _check_target_column_collision(self):
+        """Warn (or error) when feature_selection.target_column is also an outcome."""
+        if not self.feature_selection.enabled:
+            return
+        target = self.feature_selection.target_column
+        if not target:
+            return
+        outcomes = self.outcome_like_columns()
+        if target not in outcomes:
+            return
+        msg = (
+            f"feature_selection.target_column='{target}' is also an outcome / "
+            f"survival column ({outcomes}); supervised feature selection that "
+            f"uses an outcome biases cluster-vs-outcome comparisons toward "
+            f"optimistic association estimates. Set "
+            f"feature_selection.error_on_outcome_collision=true to make this a "
+            f"hard error."
+        )
+        if self.feature_selection.error_on_outcome_collision:
+            raise ValueError(msg)
+        import warnings
+
+        warnings.warn(msg, stacklevel=2)
 
     # I/O
 
@@ -259,6 +358,8 @@ class PhenoClusterConfig:
         data_quality_dict = d.pop("data_quality", {})
         categorical_flow_dict = d.pop("categorical_flow", {})
         feature_char_dict = d.pop("feature_characterization", {})
+        generalizability_dict = d.pop("generalizability", {})
+        generate_html_report = bool(d.pop("generate_html_report", True))
 
         if d:
             import warnings
@@ -297,6 +398,7 @@ class PhenoClusterConfig:
             "continuous_columns": continuous_columns,
             "categorical_columns": categorical_columns,
             "n_clusters": n_clusters,
+            "generate_html_report": generate_html_report,
         }
         sub_dicts = {
             "outcome": outcome_dict,
@@ -320,6 +422,7 @@ class PhenoClusterConfig:
             "data_quality": data_quality_dict,
             "categorical_flow": categorical_flow_dict,
             "feature_characterization": feature_char_dict,
+            "generalizability": generalizability_dict,
         }
         return cls._build(scalars=scalars, sub_dicts=sub_dicts)
 
@@ -365,6 +468,9 @@ class PhenoClusterConfig:
                 kwargs[field_name] = config_cls(**d) if d else OutcomeConfig(enabled=False)
             else:
                 kwargs[field_name] = config_cls(**d)
+
+        gen_dict = sub_dicts.get("generalizability", {})
+        kwargs["generalizability"] = _build_generalizability_config(gen_dict)
         return cls(**kwargs)
 
     # Serialization - new nested format
@@ -415,6 +521,8 @@ class PhenoClusterConfig:
             "data_quality": _config_to_dict(self.data_quality),
             "categorical_flow": _config_to_dict(self.categorical_flow),
             "feature_characterization": _config_to_dict(self.feature_characterization),
+            "generalizability": _config_to_dict(self.generalizability),
+            "generate_html_report": self.generate_html_report,
         }
 
     def to_yaml(self, output_file: Union[str, Path]):

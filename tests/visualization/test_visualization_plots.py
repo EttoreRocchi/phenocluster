@@ -140,8 +140,7 @@ class TestSurvivalVisualizer:
 
     def test_create_forest_plot(self, minimal_config):
         vis = SurvivalVisualizer(minimal_config, n_clusters=2)
-        # SurvivalVisualizer doesn't have create_forest_plot — it's in outcome
-        # But let's verify KM with comparison data works
+        # SurvivalVisualizer doesn't have create_forest_plot - it's in outcome
         fig = vis.create_kaplan_meier_plot(self._make_survival_result())
         assert fig is None or isinstance(fig, go.Figure)
 

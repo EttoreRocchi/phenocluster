@@ -28,24 +28,22 @@ The framework is **domain-agnostic** and can be applied to any clinical cohort s
 - **Outcome association analysis** with logistic regression yielding odds ratios, confidence intervals, and FDR-corrected p-values
 - **Survival analysis** with Cox proportional hazards models producing hazard ratios and log-rank tests
 - **Multistate modelling** with transition-specific Cox PH analysis, Monte Carlo simulation for state occupation probabilities with confidence interval bands, and clinical pathway enumeration
-- **Comprehensive output** including an interactive HTML report, forest plots with confidence intervals, Kaplan-Meier and Nelson-Aalen curves, heatmaps, and JSON/CSV data exports
+- **Temporal and multi-site generalizability** (v0.3.0) - validate phenotypes across time windows or sites/centers (cutoff, sliding/expanding windows, leave-one-site-out), with apply-only or refit-and-match modes, calibration metrics (Brier, ECE), drift detection (PSI, KS, chi-square), and per-phenotype OR/HR concordance with FDR-corrected delta tests
+- **Optional Streamlit dashboard** (v0.3.0) for interactive exploration of saved results: `phenocluster dashboard <results_dir>`
+- **Comprehensive output** including an interactive HTML report (toggleable via `generate_html_report` or `--no-html-report`), forest plots with confidence intervals, Kaplan-Meier and Nelson-Aalen curves, heatmaps, and JSON/CSV data exports
 
 ## Installation
 
-> **Requires Python ≥ 3.11**
-
-### From PyPI
+> **Requires Python >= 3.11**
 
 ```bash
 pip install phenocluster
 ```
 
-### From source
+To enable the optional interactive dashboard:
 
 ```bash
-git clone https://github.com/EttoreRocchi/phenocluster.git
-cd phenocluster
-pip install -e ".[dev]"
+pip install 'phenocluster[dashboard]'
 ```
 
 ## Quick start
@@ -104,7 +102,7 @@ Results are written to the output directory (default: `results/`):
 
 | File | Description |
 |------|-------------|
-| `analysis_report.html` | Comprehensive HTML report with all results and visualisations |
+| `analysis_report.html` | Comprehensive HTML report (skip with `generate_html_report: false` or `--no-html-report`) |
 | `cluster_statistics.json` | Phenotype sizes, feature distributions, and classification quality |
 | `outcome_results.json` | Odds ratios with confidence intervals and p-values |
 | `survival_results.json` | Kaplan-Meier estimates and Cox PH hazard ratios |
@@ -118,8 +116,51 @@ Results are written to the output directory (default: `results/`):
 | `results/stability_results.json` | Consensus clustering stability metrics |
 | `results/split_info.json` | Train/test split details |
 | `results/external_validation_results.json` | External validation results (when enabled) |
+| `results/temporal_validation_results.json` | Temporal generalizability results (when enabled, v0.3.0) |
+| `results/multisite_validation_results.json` | Multi-site (LOGO / holdout) generalizability results (v0.3.0) |
+| `results/external_cohorts_results.json` | External-CSV generalizability results (v0.3.0) |
+| `results/generalizability_summary.json` | Aggregate ARI / PSI summary across cohorts plus `training_scope` flag (v0.3.0) |
+| `data/generalizability/` | Per-cohort `cluster_distribution_<label>.csv` and `drift_<label>.csv` (v0.3.0) |
 | `phenocluster.log` | Pipeline execution log |
 | `artifacts/` | Cached intermediate results for incremental re-runs |
+
+### 5. Validate phenotypes across time or sites (v0.3.0)
+
+Add a `generalizability` block to the config to enable temporal, multi-site, and/or external-CSV validation. The default `training_scope: per_split` fits a fresh preprocessor and StepMix model on the derivation rows of each in-CSV split and applies it to the validation rows. The pipeline's full-cohort model stays untouched for descriptive analyses.
+
+```yaml
+generalizability:
+  enabled: true
+  training_scope: per_split          # per_split (default) | global
+  feature_selector_scope: auto       # auto (default) | global | per_split
+  refit: true                        # refit-and-match Hungarian alignment
+  min_validation_size_for_refit: 100
+  temporal:
+    time_column: admission_date
+    scheme: cutoff                   # cutoff | fraction | sliding | expanding
+    time_cutoff: "2020-12-31"
+  multisite:
+    site_column: center
+    scheme: logo                     # logo | holdout | pairwise
+    min_site_size: 30
+  external_cohorts:                  # optional, one or more separate CSVs
+    - { path: ./cohort_B.csv, label: hospital_X, kind: site }
+    - { path: ./cohort_2024.csv, label: era_2024, kind: temporal }
+  drift:        { enabled: true, n_bins: 10, top_k: 20 }
+  calibration:  { enabled: true, n_bins: 10, strategy: quantile }
+  outcome_concordance: { enabled: true, fdr_method: bh, alpha: 0.05 }
+```
+
+Each cohort yields a phenotype distribution, drift table, refit-and-match metrics (ARI / NMI / Hungarian-matched accuracy), calibration metrics, and per-phenotype OR/HR concordance with FDR-corrected delta tests. Cohort reports also expose a `fit_mode` field (`per_split` for in-CSV splits under the default scope; `global` for external CSVs and the legacy permissive path) and `derivation_only_ari` showing how the fresh derivation-only fit compares to the global model.
+
+### 6. Explore results interactively (v0.3.0)
+
+```bash
+pip install 'phenocluster[dashboard]'
+phenocluster dashboard ./results/
+```
+
+Streamlit launches at `http://127.0.0.1:8501` with tabs for phenotype distribution, outcomes, survival, generalizability, and a per-cohort drift explorer.
 
 ## Pipeline overview
 
@@ -141,11 +182,12 @@ PhenoCluster executes the following stages in order:
 
 | Command | Description |
 |---------|-------------|
-| `phenocluster run -d DATA -c CONFIG [--force-rerun] [-v] [-q]` | Run the full pipeline |
+| `phenocluster run -d DATA -c CONFIG [--force-rerun] [-v] [-q] [--html-report/--no-html-report]` | Run the full pipeline |
 | `phenocluster create-config [-p PROFILE] [-o OUTPUT]` | Generate a config YAML from a profile template |
 | `phenocluster validate-config -c CONFIG [-d DATA]` | Validate config structure; cross-check columns against data |
 | `phenocluster list-profiles` | List available configuration profile templates |
 | `phenocluster show-profile NAME` | Print the resolved YAML for a profile with syntax highlighting |
+| `phenocluster dashboard RESULTS_DIR [--port 8501] [--host 127.0.0.1]` | Launch the optional Streamlit dashboard (requires `pip install 'phenocluster[dashboard]'`) |
 | `phenocluster version` | Show version, repository link, and documentation link |
 
 ## Configuration profiles

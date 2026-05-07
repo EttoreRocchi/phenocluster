@@ -8,27 +8,33 @@ Author: Ettore Rocchi <ettore.rocchi3@unibo.it>
 License: MIT
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 
 # Configuration classes
 from .config import (
     CacheConfig,
+    CalibrationSubConfig,
     CategoricalEncodingConfig,
     CategoricalFlowConfig,
     DataQualityConfig,
     DataSplitConfig,
+    DriftSubConfig,
+    ExternalCohortSpec,
     ExternalValidationConfig,
     FeatureCharacterizationConfig,
     FeatureSelectionConfig,
+    GeneralizabilityConfig,
     ImputationConfig,
     InferenceConfig,
     LoggingConfig,
     ModelSelectionConfig,
+    MultiSiteSpec,
     MultistateConfig,
     MultistateState,
     MultistateTransition,
+    OutcomeConcordanceSubConfig,
     OutcomeConfig,
     OutlierConfig,
     PhenoClusterConfig,
@@ -38,6 +44,7 @@ from .config import (
     StepMixConfig,
     SurvivalConfig,
     SurvivalTarget,
+    TemporalSpec,
     VisualizationConfig,
 )
 
@@ -56,15 +63,27 @@ from .core.types import (
 )
 
 # Data handling
-from .data import DataPreprocessor, DataSplitter
+from .data import (
+    BaseSplitter,
+    DataPreprocessor,
+    DataSplitter,
+    HoldoutGroupSplitter,
+    LeaveOneGroupOutSplitter,
+    RandomSplitter,
+    TemporalSplitter,
+    make_splitter,
+)
 
 # Evaluation
 from .evaluation import (
     ClusterEvaluator,
     ClusterStatistics,
+    CohortReport,
     DataQualityAssessor,
     ExternalValidator,
     FeatureCharacterizer,
+    GeneralizabilityEvaluator,
+    GeneralizabilityReport,
     MonteCarloResults,
     MultistateAnalyzer,
     MultistateResults,
@@ -139,6 +158,13 @@ __all__ = [
     "SurvivalConfig",
     "SurvivalTarget",
     "VisualizationConfig",
+    "GeneralizabilityConfig",
+    "TemporalSpec",
+    "MultiSiteSpec",
+    "CalibrationSubConfig",
+    "DriftSubConfig",
+    "OutcomeConcordanceSubConfig",
+    "ExternalCohortSpec",
     # Config profiles
     "list_profiles",
     "get_profile",
@@ -147,6 +173,12 @@ __all__ = [
     "DataPreprocessor",
     "DataSplitter",
     "DataSplitResult",
+    "BaseSplitter",
+    "RandomSplitter",
+    "TemporalSplitter",
+    "HoldoutGroupSplitter",
+    "LeaveOneGroupOutSplitter",
+    "make_splitter",
     # Evaluation
     "ClusterEvaluator",
     "ClusterStatistics",
@@ -159,6 +191,9 @@ __all__ = [
     "MultistateAnalyzer",
     "MultistateResults",
     "MonteCarloResults",
+    "GeneralizabilityEvaluator",
+    "GeneralizabilityReport",
+    "CohortReport",
     # Visualization
     "Visualizer",
     # Utils

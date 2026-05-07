@@ -111,7 +111,7 @@ def create_scorer(criterion: str) -> Callable:
     Parameters
     ----------
     criterion : str
-        One of 'BIC', 'AIC', 'CAIC', 'SABIC', 'ICL', 'entropy'
+        One of 'BIC', 'AIC', 'CAIC', 'SABIC', 'ICL', 'ENTROPY' (case-insensitive).
 
     Returns
     -------
@@ -141,7 +141,7 @@ def create_scorer(criterion: str) -> Callable:
     return scorers[criterion]
 
 
-def get_all_criteria(estimator: Any, X: np.ndarray) -> Dict[str, float]:
+def get_all_criteria(estimator: Any, X: np.ndarray) -> Dict[str, Optional[float]]:
     """
     Compute all available information criteria for a fitted model.
 
@@ -154,8 +154,10 @@ def get_all_criteria(estimator: Any, X: np.ndarray) -> Dict[str, float]:
 
     Returns
     -------
-    Dict[str, float]
-        Dictionary with all criteria values (original scale, not negated)
+    Dict[str, Optional[float]]
+        Dictionary with all criteria values (original scale, not negated).
+        Any individual criterion is ``None`` when the underlying estimator
+        method raises (e.g., not implemented or numerical failure).
     """
     results = {}
 

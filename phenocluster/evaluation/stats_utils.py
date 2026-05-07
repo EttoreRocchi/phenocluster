@@ -6,19 +6,22 @@ Shared utilities for frequentist statistical inference, including
 FDR correction for multiple comparisons.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.stats import false_discovery_control
 
 
-def apply_fdr_correction(p_values: List[Optional[float]]) -> List[Optional[float]]:
-    """Apply Benjamini-Hochberg FDR correction to a list of p-values.
+def apply_fdr_correction(p_values: Sequence[Optional[float]]) -> List[Optional[float]]:
+    """Apply Benjamini-Hochberg FDR correction to a sequence of p-values.
 
     Parameters
     ----------
-    p_values : List[Optional[float]]
-        Raw p-values (None/NaN entries are preserved unchanged).
+    p_values : Sequence[Optional[float]]
+        Raw p-values (None/NaN entries are preserved unchanged). Accepts
+        any read-only sequence so callers can pass ``list[float]`` (without
+        the invariance pain) as well as the canonical
+        ``list[Optional[float]]``.
 
     Returns
     -------

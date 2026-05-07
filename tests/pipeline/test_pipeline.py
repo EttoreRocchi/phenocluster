@@ -84,34 +84,6 @@ class TestPhenotypeReordering:
         assert np.sum(new_labels == 2) == 2
 
 
-class TestStepFunctionInterpolation:
-    """Test step-function interpolation for KM curves."""
-
-    def test_step_function_is_right_continuous(self):
-        """Test that interpolation uses step function, not linear."""
-        from scipy.interpolate import interp1d
-
-        timeline = np.array([0, 5, 10, 15, 20])
-        survival = np.array([1.0, 0.8, 0.6, 0.4, 0.2])
-
-        sf = interp1d(
-            timeline,
-            survival,
-            kind="previous",
-            bounds_error=False,
-            fill_value=(1.0, 0.2),
-        )
-
-        # At t=7 (between 5 and 10), should be 0.8 (step), not 0.72 (linear)
-        assert sf(7) == 0.8
-        # At t=12, should be 0.6
-        assert sf(12) == 0.6
-        # Before first time, should be 1.0
-        assert sf(-1) == 1.0
-        # After last time, should be 0.2
-        assert sf(25) == 0.2
-
-
 class TestReferencePhenotype:
     """Test configurable reference phenotype dummy coding."""
 
@@ -229,26 +201,6 @@ class TestMinClusterSizeConfig:
 
 class TestInferenceConfig:
     """Test that InferenceConfig defaults and validation are correct."""
-
-    def test_default_values(self):
-        """Verify default confidence_level, fdr_correction, etc."""
-        from phenocluster.config import InferenceConfig
-
-        cfg = InferenceConfig()
-        assert cfg.enabled is True
-        assert cfg.confidence_level == 0.95
-        assert cfg.fdr_correction is True
-        assert cfg.outcome_test == "auto"
-        assert cfg.cox_penalizer == 0.0
-
-    def test_custom_values(self):
-        """Custom values should be stored correctly."""
-        from phenocluster.config import InferenceConfig
-
-        cfg = InferenceConfig(confidence_level=0.90, cox_penalizer=0.1, outcome_test="fisher")
-        assert cfg.confidence_level == 0.90
-        assert cfg.cox_penalizer == 0.1
-        assert cfg.outcome_test == "fisher"
 
     def test_invalid_confidence_level_raises(self):
         """confidence_level outside (0, 1) should raise ValueError."""

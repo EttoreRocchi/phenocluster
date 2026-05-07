@@ -11,6 +11,7 @@ from .sections.clusters import generate_cluster_section
 from .sections.data_quality import generate_data_quality_section
 from .sections.external_validation import generate_external_validation_section
 from .sections.feature_importance import generate_feature_importance_section
+from .sections.generalizability import generate_generalizability_section
 from .sections.header import generate_html_footer, generate_html_header, generate_nav_section
 from .sections.methods import generate_methods_section
 from .sections.model_selection import generate_model_selection_section
@@ -68,6 +69,7 @@ def generate_html_report(
         generate_multistate_section(data, results_dir),
         generate_feature_importance_section(data),
         generate_external_validation_section(data, results_dir),
+        generate_generalizability_section(data, results_dir),
         "</main>",
         generate_html_footer(),
     ]
@@ -99,6 +101,10 @@ def _load_results(results_dir: Path) -> Dict:
         "classification_quality": "results/classification_quality.json",
         "classification_quality_test": "results/classification_quality_test.json",
         "external_validation_results": "results/external_validation_results.json",
+        "temporal_validation_results": "results/temporal_validation_results.json",
+        "multisite_validation_results": "results/multisite_validation_results.json",
+        "external_cohorts_results": "results/external_cohorts_results.json",
+        "generalizability_summary": "results/generalizability_summary.json",
     }
 
     for key, filename in json_files.items():

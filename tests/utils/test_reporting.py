@@ -76,7 +76,7 @@ class TestGenerateHtmlReport:
         assert result_path.exists()
 
     def test_empty_results_dir(self, tmp_path):
-        # Empty directory — should still produce a report (with empty sections)
+        # Empty directory - should still produce a report (with empty sections)
         results_dir = tmp_path / "empty"
         results_dir.mkdir()
         result_path = generate_html_report(results_dir)

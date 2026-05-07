@@ -3,6 +3,7 @@
 import re
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from phenocluster.cli import (
@@ -359,18 +360,120 @@ class TestShowProfileCommand:
         assert result.exit_code != 0
 
 
-class TestBackwardsCompatImports:
-    def test_package_level_exports(self):
-        """Legacy symbols must still resolve from `phenocluster.cli`."""
-        from phenocluster.cli import (  # noqa: F401
-            PhenoClusterConfig,
-            PhenoClusterPipeline,
-            _check_columns,
-            _validate_against_data,
-            _validate_multistate_structure,
-            _validate_structure,
-            app,
-            main,
-            pd,
-            typer_click_object,
+class TestDisplayValidationResults:
+    """Tests for the validation result presenter."""
+
+    def test_invalid_raises_typer_exit(self):
+        import typer
+
+        from phenocluster.cli import _display_validation_results
+
+        cfg = _make_cfg()
+        with pytest.raises(typer.Exit):
+            _display_validation_results(cfg, "config.yaml", ["bad"], [], None)
+
+    def test_valid_path_does_not_raise(self):
+        from phenocluster.cli import _display_validation_results
+
+        cfg = _make_cfg()
+        _display_validation_results(cfg, "config.yaml", [], [], {"x1", "x2", "cat1"})
+
+    def test_warnings_only_path(self):
+        from phenocluster.cli import _display_validation_results
+
+        cfg = _make_cfg()
+        _display_validation_results(cfg, "config.yaml", [], ["heads up"], None)
+
+
+class TestValidateAgainstDataExtras:
+    """Coverage for the cross-reference branches."""
+
+    def test_stratify_missing_flagged(self):
+        cfg = _make_cfg(
+            data={
+                "continuous_columns": ["x1"],
+                "categorical_columns": [],
+                "split": {"test_size": 0.2, "stratify_by": "missing"},
+            }
         )
+        errors = []
+        _validate_against_data(cfg, {"x1"}, errors, [])
+        assert any("stratify_by" in e for e in errors)
+
+    def test_healthiest_missing_outcome_flagged(self):
+        cfg = _make_cfg(reference_phenotype={"strategy": "healthiest", "health_outcome": "absent"})
+        errors = []
+        _validate_against_data(cfg, {"x1", "x2", "cat1"}, errors, [])
+        assert any("health_outcome" in e for e in errors)
+
+    def test_multistate_event_column_missing_flagged(self):
+        cfg = _make_cfg(
+            multistate={
+                "enabled": True,
+                "states": [
+                    {"id": 0, "name": "init", "state_type": "initial"},
+                    {
+                        "id": 1,
+                        "name": "evt",
+                        "state_type": "absorbing",
+                        "event_column": "absent_event",
+                        "time_column": "absent_time",
+                    },
+                ],
+                "transitions": [{"name": "to_evt", "from_state": 0, "to_state": 1}],
+            }
+        )
+        errors = []
+        _validate_against_data(cfg, {"x1", "x2", "cat1"}, errors, [])
+        assert any("absent_event" in e for e in errors)
+        assert any("absent_time" in e for e in errors)
+
+    def test_baseline_confounders_missing_flagged(self):
+        cfg = _make_cfg(
+            multistate={
+                "enabled": True,
+                "states": [
+                    {"id": 0, "name": "init", "state_type": "initial"},
+                    {"id": 1, "name": "end", "state_type": "absorbing"},
+                ],
+                "transitions": [{"name": "go", "from_state": 0, "to_state": 1}],
+                "baseline_confounders": ["nope"],
+            }
+        )
+        errors = []
+        _validate_against_data(cfg, {"x1", "x2", "cat1"}, errors, [])
+        assert any("nope" in e for e in errors)
+
+    def test_feature_selection_target_column_missing_flagged(self):
+        cfg = _make_cfg(
+            preprocessing={
+                "feature_selection": {
+                    "enabled": True,
+                    "method": "lasso",
+                    "target_column": "ghost",
+                }
+            }
+        )
+        errors = []
+        _validate_against_data(cfg, {"x1", "x2", "cat1"}, errors, [])
+        assert any("ghost" in e for e in errors)
+
+
+class TestRunCommandErrorPaths:
+    """Coverage for the error/branch lines in cli/commands/run.py."""
+
+    def test_missing_data_file_exits_nonzero(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("global:\n  project_name: test\n")
+        result = runner.invoke(
+            app, ["run", "-d", str(tmp_path / "missing.csv"), "-c", str(config_file)]
+        )
+        assert result.exit_code != 0
+
+    def test_missing_config_file_exits_nonzero(self, tmp_path):
+        data_file = tmp_path / "data.csv"
+        data_file.write_text("x\n1\n")
+        result = runner.invoke(
+            app, ["run", "-d", str(data_file), "-c", str(tmp_path / "missing.yaml")]
+        )
+        assert result.exit_code != 0

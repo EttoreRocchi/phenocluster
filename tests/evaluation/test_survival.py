@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _make_config(n_clusters=2, inference_enabled=True):
@@ -105,3 +106,146 @@ class TestAnalyzeSurvivalResultKeys:
         assert "survival_data" in results
         assert "median_survival" in results
         assert "logrank_p_value" in results
+
+
+class TestAnalyzeSurvivalEdgeCases:
+    """Coverage for guard branches in analyze_survival."""
+
+    def test_missing_time_column_raises(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=20, n_events=5).drop(columns=["time"])
+        with pytest.raises(ValueError):
+            analyzer.analyze_survival(df, df["phenotype"].values, "time", "event")
+
+    def test_no_valid_rows_returns_empty(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=20, n_events=5)
+        df.loc[:, "time"] = np.nan
+        results = analyzer.analyze_survival(df, df["phenotype"].values, "time", "event")
+        assert results == {}
+
+
+class TestWeightedSurvival:
+    """Tests for analyze_weighted_survival."""
+
+    @pytest.mark.filterwarnings("ignore::lifelines.exceptions.StatisticalWarning")
+    def test_weighted_survival_returns_results(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=80, n_events=30)
+        rng = np.random.RandomState(0)
+        probs = rng.dirichlet([3, 3], size=len(df))
+        results = analyzer.analyze_weighted_survival(df, probs, "time", "event")
+        for key in (
+            "weighted_km",
+            "comparison",
+            "median_survival",
+            "time_column",
+            "event_column",
+            "analysis_type",
+        ):
+            assert key in results
+        assert results["analysis_type"] == "weighted"
+
+    def test_mismatched_rows_raises(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=10, n_events=3)
+        with pytest.raises(ValueError):
+            analyzer.analyze_weighted_survival(df, np.ones((5, 2)), "time", "event")
+
+    def test_mismatched_clusters_raises(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=20, n_events=5)
+        with pytest.raises(ValueError):
+            analyzer.analyze_weighted_survival(df, np.ones((20, 3)), "time", "event")
+
+    def test_no_valid_rows_returns_empty(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=20, n_events=5)
+        df.loc[:, "time"] = np.nan
+        results = analyzer.analyze_weighted_survival(df, np.ones((20, 2)) / 2.0, "time", "event")
+        assert results == {}
+
+
+class TestSurvivalAtTimes:
+    def test_returns_interpolated_values(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        km = {
+            0: {
+                "timeline": np.array([0.0, 5.0, 10.0]),
+                "survival_function": np.array([1.0, 0.7, 0.4]),
+            }
+        }
+        out = SurvivalAnalyzer._survival_at_times(km, np.array([3.0, 7.0]))
+        assert 0 in out
+        assert len(out[0]) == 2
+
+
+class TestPHCheck:
+    def test_check_ph_runs(self):
+        from phenocluster.evaluation.survival import SurvivalAnalyzer
+
+        analyzer = SurvivalAnalyzer(_make_config(), n_clusters=2)
+        df = _make_survival_data(n=80, n_events=30)
+        df["phenotype"] = np.array([i % 2 for i in range(len(df))])
+        ph = analyzer._check_ph(df, "time", "event")
+        assert ph is None or isinstance(ph, dict)
+
+
+class TestGrambschTherneauGlobal:
+    """Spot-check the global Schoenfeld-residual PH test against lifelines."""
+
+    def test_matches_lifelines_single_covariate(self):
+        from lifelines import CoxPHFitter
+        from lifelines.statistics import proportional_hazard_test
+
+        from phenocluster.evaluation.survival import _grambsch_therneau_global
+
+        rng = np.random.default_rng(0)
+        n = 800
+        x = rng.normal(size=n)
+        times = -np.log(rng.uniform(size=n)) / np.exp(0.5 * x) + 0.5
+        events = (rng.uniform(size=n) < 0.7).astype(int)
+        df = pd.DataFrame({"t": times, "e": events, "x": x})
+        cph = CoxPHFitter()
+        cph.fit(df, duration_col="t", event_col="e", show_progress=False)
+
+        lif = proportional_hazard_test(cph, df, time_transform="log")
+        gt = _grambsch_therneau_global(cph, df, time_col="t", transform="log")
+        assert gt is not None
+        assert np.isclose(
+            gt["test_statistic"],
+            lif.summary["test_statistic"].iloc[0],
+            rtol=5e-3,
+        )
+
+    def test_handles_zero_event_times(self):
+        from lifelines import CoxPHFitter
+
+        from phenocluster.evaluation.survival import _grambsch_therneau_global
+
+        df = pd.DataFrame(
+            {
+                "t": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+                "e": [1] * 10,
+                "x": [0.1, -0.2, 0.3, -0.4, 0.5, -0.1, 0.7, -0.8, 0.9, -0.3],
+            }
+        )
+        cph = CoxPHFitter()
+        cph.fit(df, duration_col="t", event_col="e", show_progress=False)
+        gt = _grambsch_therneau_global(cph, df, time_col="t", transform="log")
+        assert gt is not None
+        assert np.isfinite(gt["test_statistic"])
+        assert 0.0 <= gt["p_value"] <= 1.0

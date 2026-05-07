@@ -125,17 +125,18 @@ class LassoSelector(BaseFeatureSelector):
 
             self._model = LogisticRegressionCV(
                 Cs=Cs,
-                penalty="l1",
+                l1_ratios=(1.0,),
                 solver="saga",
                 cv=self.cv,
                 random_state=self.random_state,
                 max_iter=1000,
+                use_legacy_attributes=False,
             )
 
             try:
                 self._model.fit(X_scaled, y)
                 self.coefficients_ = np.abs(self._model.coef_).mean(axis=0)
-                self.alpha_ = 1.0 / self._model.C_[0]
+                self.alpha_ = 1.0 / float(self._model.C_)
             except Exception as e:
                 raise FeatureSelectionError(f"LASSO fitting failed: {e}", method="lasso")
         else:
@@ -143,7 +144,7 @@ class LassoSelector(BaseFeatureSelector):
             if self.alpha is not None:
                 alphas = [self.alpha]
             else:
-                alphas = None  # Let LassoCV choose
+                alphas = 100
 
             self._model = LassoCV(
                 alphas=alphas, cv=self.cv, random_state=self.random_state, max_iter=1000

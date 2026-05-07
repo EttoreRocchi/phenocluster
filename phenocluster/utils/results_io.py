@@ -1,8 +1,9 @@
 """Pipeline result serialization and I/O."""
 
 import json
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, List, Optional
 
 import joblib
 import numpy as np
@@ -58,9 +59,13 @@ def save_pipeline_results(
     _save_data_files(results, data_dir, logger)
     _save_json_results(results, results_dir, reference_phenotype, logger)
     _save_model_selection(results, data_dir, results_dir, logger)
+    _save_generalizability_outputs(results, results_dir, data_dir, logger)
     _save_artifacts(config, preprocessor, feature_selector, artifacts_dir, logger)
     _save_plots(results, plots_dir, config, logger)
-    _generate_report(output_path, config, logger)
+    if getattr(config, "generate_html_report", True):
+        _generate_report(output_path, config, logger)
+    else:
+        logger.info("  HTML report generation disabled by config (generate_html_report=False)")
 
     logger.info("All results saved successfully")
 
@@ -205,25 +210,143 @@ def _save_artifacts(config, preprocessor, feature_selector, artifacts_dir, logge
 
 
 def _save_plots(results, plots_dir, config, logger):
-    """Save plot HTML files."""
+    """Save plot HTML and JSON files.
+
+    Each Plotly figure is written as ``<name>.html`` (for the static report
+    and standalone viewing) and ``<name>.json`` (for the dashboard, which
+    rehydrates the figure via ``plotly.io.from_json`` and renders it
+    natively with ``st.plotly_chart``).
+    """
     if "plots" in results and config.visualization.save_plots:
         for plot_name, fig in results["plots"].items():
             if fig is not None:
-                try:
-                    fig.write_html(plots_dir / f"{plot_name}.html")
-                    logger.info(f"  Saved plots/{plot_name}.html")
-                except Exception as e:
-                    logger.warning(f"  Could not save {plot_name}.html: {e}")
+                _save_one_plot(fig, plots_dir, plot_name, logger)
 
     ext_plots = results.get("external_validation_results", {}).get("plots", {})
     if ext_plots and config.visualization.save_plots:
         for plot_name, fig in ext_plots.items():
             if fig is not None:
-                try:
-                    fig.write_html(plots_dir / f"{plot_name}.html")
-                except Exception as e:
-                    logger.warning(f"  Could not save {plot_name}.html: {e}")
+                _save_one_plot(fig, plots_dir, plot_name, logger, log_each=False)
         logger.info(f"  Saved {len(ext_plots)} external validation plots")
+
+
+def _save_one_plot(fig, plots_dir, plot_name, logger, log_each: bool = True):
+    """Write a Plotly figure to both ``.html`` and ``.json``."""
+    html_target = plots_dir / f"{plot_name}.html"
+    json_target = plots_dir / f"{plot_name}.json"
+    try:
+        fig.write_html(html_target)
+    except Exception as e:
+        logger.warning(f"  Could not save {plot_name}.html: {e}")
+    try:
+        fig.write_json(json_target)
+    except Exception as e:
+        logger.warning(f"  Could not save {plot_name}.json: {e}")
+    if log_each:
+        logger.info(f"  Saved plots/{plot_name}.html + .json")
+
+
+_BUCKET_FILES = {
+    "temporal": "temporal_validation_results.json",
+    "multisite": "multisite_validation_results.json",
+    "external": "external_cohorts_results.json",
+}
+
+
+def _cohort_to_json_safe(cohort: dict) -> dict:
+    out = dict(cohort)
+    drift = out.get("drift")
+    if isinstance(drift, pd.DataFrame):
+        out["drift"] = drift.to_dict(orient="records")
+    elif drift is not None and not isinstance(drift, list):
+        out["drift"] = None
+    return out
+
+
+def _write_cohort_bucket_json(
+    name: str,
+    cohorts: List[dict],
+    results_dir: Path,
+    logger,
+) -> None:
+    if not cohorts:
+        return
+    filename = _BUCKET_FILES[name]
+    with open(results_dir / filename, "w") as f:
+        json.dump(
+            [_cohort_to_json_safe(c) for c in cohorts],
+            f,
+            indent=2,
+            default=_numpy_encoder,
+        )
+    logger.info(f"  Saved results/{filename}")
+
+
+def _write_cohort_csvs(cohorts: Iterable[dict], gen_data_dir: Path) -> None:
+    gen_data_dir = gen_data_dir.resolve()
+    for cohort in cohorts:
+        label = _safe_label(cohort.get("label", "cohort"))
+        cluster_dist = cohort.get("cluster_distribution") or {}
+        if cluster_dist:
+            rows = [
+                {
+                    "phenotype": int(k),
+                    "count": int(v["count"]),
+                    "percentage": float(v["percentage"]),
+                }
+                for k, v in cluster_dist.items()
+            ]
+            target = (gen_data_dir / f"cluster_distribution_{label}.csv").resolve()
+            if not target.is_relative_to(gen_data_dir):
+                continue
+            pd.DataFrame(rows).to_csv(target, index=False)
+        drift = cohort.get("drift")
+        drift_target = (gen_data_dir / f"drift_{label}.csv").resolve()
+        if not drift_target.is_relative_to(gen_data_dir):
+            continue
+        if isinstance(drift, pd.DataFrame) and not drift.empty:
+            drift.to_csv(drift_target, index=False)
+        elif isinstance(drift, list) and drift:
+            pd.DataFrame(drift).to_csv(drift_target, index=False)
+
+
+def _save_generalizability_outputs(results, results_dir, data_dir, logger):
+    """Save the v0.3.0 generalizability JSON files and per-cohort CSVs."""
+    raw = results.get("generalizability_results")
+    if not raw:
+        return
+
+    buckets = {name: (raw.get(name, []) or []) for name in _BUCKET_FILES}
+    summary = raw.get("summary", {}) or {}
+
+    for name, cohorts in buckets.items():
+        _write_cohort_bucket_json(name, cohorts, results_dir, logger)
+
+    if summary or any(buckets.values()):
+        with open(results_dir / "generalizability_summary.json", "w") as f:
+            json.dump(summary, f, indent=2, default=_numpy_encoder)
+        logger.info("  Saved results/generalizability_summary.json")
+
+    gen_data_dir = data_dir / "generalizability"
+    gen_data_dir.mkdir(parents=True, exist_ok=True)
+    all_cohorts = buckets["temporal"] + buckets["multisite"] + buckets["external"]
+    _write_cohort_csvs(all_cohorts, gen_data_dir)
+
+
+_LABEL_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_label(label: str, max_len: int = 120) -> str:
+    """Filesystem-safe filename from a free-form cohort label.
+
+    Whitelist sanitiser: only ASCII letters/digits/`.`/`_`/`-` survive;
+    every other character is replaced with `_`. Trims to ``max_len`` so a
+    single oversized label cannot exhaust filename limits, and strips any
+    leading/trailing `_`/`.` so the result cannot accidentally start a
+    hidden file or relative path component.
+    """
+    cleaned = _LABEL_RE.sub("_", str(label))[:max_len].strip("._")
+    return cleaned or "cohort"
 
 
 def _generate_report(output_path, config, logger):

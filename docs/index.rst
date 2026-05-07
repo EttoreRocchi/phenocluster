@@ -26,6 +26,8 @@ with clinical outcomes.
    cli
    configuration
    profiles
+   generalizability
+   dashboard
 
 .. toctree::
    :maxdepth: 2

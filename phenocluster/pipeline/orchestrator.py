@@ -118,6 +118,7 @@ class PhenoClusterPipeline:
             ("Stability analysis", self._run_stability),
             ("Outcome / survival analyses", self._run_analyses),
             ("Finalization", self._run_finalization),
+            ("Generalizability", self._run_generalization),
         ]
 
         total = len(stages)
@@ -345,6 +346,38 @@ class PhenoClusterPipeline:
             reference_phenotype=self.reference_phenotype,
         )
 
+    def _run_generalization(self, ctx: PipelineContext) -> None:
+        if not self.config.generalizability.enabled:
+            return
+        from .stages import GeneralizationStage
+
+        stage = GeneralizationStage(self.config, self.logger)
+        try:
+            stage.run(ctx, self.preprocessor, self.feature_selector)
+        except Exception as exc:
+            self.logger.warning(
+                f"Generalizability stage failed: {exc}; pipeline results preserved."
+            )
+            return
+        if not ctx.generalizability_results:
+            return
+        self.results["generalizability_results"] = ctx.generalizability_results
+
+        try:
+            from ..visualization._generalization import create_all_generalizability_plots
+
+            top_k = getattr(self.config.generalizability.drift, "top_k", 20)
+            gen_plots = create_all_generalizability_plots(
+                ctx.generalizability_results, drift_top_k=int(top_k)
+            )
+        except Exception as exc:
+            self.logger.warning(f"Generalizability plot generation failed: {exc}")
+            return
+        if gen_plots:
+            existing = self.results.get("plots") or {}
+            existing.update(gen_plots)
+            self.results["plots"] = existing
+
     def _extract_ctx_data(self, ctx, stage):
         """Extract ctx fields relevant to a stage for caching."""
         if stage == "preprocess":
@@ -398,6 +431,10 @@ def run_pipeline(
         Configuration object or path to configuration file
     force_rerun : bool
         If True, ignore cached artifacts and re-run all steps.
+    progress_callback : callable, optional
+        Callback invoked as ``callback(stage_name, fraction)`` before each
+        stage runs, with ``fraction`` in ``[0.0, 1.0]``. Used by the CLI to
+        drive a Rich progress bar; safe to omit.
 
     Returns
     -------

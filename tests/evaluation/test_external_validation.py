@@ -3,42 +3,12 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from phenocluster.config import ExternalValidationConfig, PhenoClusterConfig
+from phenocluster.config import PhenoClusterConfig
 from phenocluster.evaluation.external_validation import ExternalValidator
 from phenocluster.utils.report import _generate_external_validation_section
-
-
-class TestExternalValidationConfig:
-    """Tests for ExternalValidationConfig dataclass."""
-
-    def test_defaults(self):
-        cfg = ExternalValidationConfig()
-        assert cfg.enabled is False
-        assert cfg.external_data_path is None
-
-    def test_enabled(self):
-        cfg = ExternalValidationConfig(enabled=True, external_data_path="/tmp/ext.csv")
-        assert cfg.enabled is True
-        assert cfg.external_data_path == "/tmp/ext.csv"
-
-    def test_config_round_trip(self, tmp_path):
-        """ExternalValidationConfig survives to_dict -> from_dict round-trip."""
-        cfg = PhenoClusterConfig(
-            continuous_columns=["a"],
-            output_dir=str(tmp_path),
-            external_validation=ExternalValidationConfig(
-                enabled=True, external_data_path="/data/external.csv"
-            ),
-        )
-        d = cfg.to_dict()
-        assert d["external_validation"]["enabled"] is True
-        assert d["external_validation"]["external_data_path"] == "/data/external.csv"
-
-        cfg2 = PhenoClusterConfig.from_dict(d)
-        assert cfg2.external_validation.enabled is True
-        assert cfg2.external_validation.external_data_path == "/data/external.csv"
 
 
 class TestExternalValidator:
@@ -85,35 +55,97 @@ class TestExternalValidator:
         assert results["n_samples"] == 5
         assert results["log_likelihood"] == -1.5
 
-    def test_cluster_distribution(self, config, mock_model):
-        validator = ExternalValidator(config, n_clusters=3)
-        X_external = np.random.randn(5, 2)
 
-        results = validator.validate_with_model(
-            X_external=X_external,
-            model=mock_model,
-            n_external=5,
+class TestCompareOutcomesWithExternalDf:
+    """Tests for the outcome-comparison branch with external DataFrame."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        from phenocluster.config import OutcomeConfig
+
+        return PhenoClusterConfig(
+            continuous_columns=["a", "b"],
+            output_dir=str(tmp_path),
+            outcome=OutcomeConfig(outcome_columns=["mortality"]),
         )
 
-        dist = results["cluster_distribution"]
-        assert dist[0]["count"] == 2
-        assert dist[1]["count"] == 2
-        assert dist[2]["count"] == 1
+    def test_external_prevalence_and_chi2_present(self, config):
+        from unittest.mock import MagicMock as MM
 
-    def test_derivation_distribution_included(self, config, mock_model):
-        validator = ExternalValidator(config, n_clusters=3)
-        X_external = np.random.randn(5, 2)
-        derivation_labels = np.array([0, 0, 0, 1, 2])
-
+        validator = ExternalValidator(config, n_clusters=2)
+        model = MM()
+        model.predict.return_value = np.array([0, 0, 0, 1, 1, 1])
+        model.score.return_value = -1.0
+        derivation_outcomes = {
+            "full_cohort": {
+                "mortality": {
+                    0: {"prevalence": 0.3, "n_positive": 6, "n_total": 20},
+                    1: {"prevalence": 0.7, "n_positive": 14, "n_total": 20},
+                }
+            }
+        }
+        external_df = pd.DataFrame({"mortality": [0, 1, 0, 1, 1, 0]})
         results = validator.validate_with_model(
-            X_external=X_external,
-            model=mock_model,
-            derivation_labels=derivation_labels,
-            n_external=5,
+            X_external=np.zeros((6, 2)),
+            model=model,
+            derivation_outcomes=derivation_outcomes,
+            n_external=6,
+            external_df=external_df,
         )
+        comp = results["outcome_comparison"]["mortality"]
+        assert "external_prevalence" in comp
+        assert "external_outcome_counts" in comp
+        assert "chi2_statistic" in comp
+        assert "chi2_p_value" in comp
 
-        assert results["derivation_distribution"] is not None
-        assert results["derivation_distribution"][0]["count"] == 3
+    def test_outcome_comparison_without_external_df(self, config):
+        from unittest.mock import MagicMock as MM
+
+        validator = ExternalValidator(config, n_clusters=2)
+        model = MM()
+        model.predict.return_value = np.array([0, 1, 1, 0])
+        model.score.return_value = -2.0
+        derivation_outcomes = {
+            "full_cohort": {
+                "mortality": {
+                    0: {"prevalence": 0.5, "n_positive": 5, "n_total": 10},
+                }
+            }
+        }
+        results = validator.validate_with_model(
+            X_external=np.zeros((4, 2)),
+            model=model,
+            derivation_outcomes=derivation_outcomes,
+            n_external=4,
+        )
+        comp = results["outcome_comparison"]["mortality"]
+        assert "external_prevalence" not in comp
+        assert "derivation_prevalence" in comp
+
+
+class TestChi2CohortComparison:
+    """Direct tests for the static chi-square helper."""
+
+    def test_returns_dict_for_valid_counts(self):
+        deriv = {0: {"n_positive": 10, "n_total": 50}, 1: {"n_positive": 30, "n_total": 50}}
+        ext = {0: {"n_positive": 5, "n_total": 25}, 1: {"n_positive": 20, "n_total": 25}}
+        out = ExternalValidator._chi2_cohort_comparison(deriv, ext)
+        assert out is not None
+        assert "statistic" in out and "p_value" in out
+
+    def test_no_overlap_returns_none(self):
+        out = ExternalValidator._chi2_cohort_comparison(
+            {0: {"n_positive": 5, "n_total": 10}},
+            {1: {"n_positive": 5, "n_total": 10}},
+        )
+        assert out is None
+
+    def test_zero_totals_returns_none(self):
+        out = ExternalValidator._chi2_cohort_comparison(
+            {0: {"n_positive": 0, "n_total": 0}},
+            {0: {"n_positive": 0, "n_total": 0}},
+        )
+        assert out is None
 
 
 class TestSimplifiedAssignmentModelRemoved:

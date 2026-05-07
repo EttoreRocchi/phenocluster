@@ -110,20 +110,34 @@ class SurvivalVisualizer(BaseVisualizer):
         yaxis_range: Optional[list] = None,
         time_unit: str = "days",
     ) -> go.Figure:
-        """Apply standard layout tweaks shared by KM and NA plots."""
+        """Apply standard layout tweaks shared by KM and NA plots.
+
+        The cohort name is folded into a single-line title (no <br>, no
+        <sup>) so it cannot collide with the x-axis title or the chart.
+        Wide top margin reserves space for the title; wide right margin
+        fits the legend; ``side="bottom"`` pins the x-axis title to the
+        bottom of the plot.
+        """
+        full_title = f"{title} - {display_name}" if display_name else title
         fig = apply_standard_layout(
             fig,
-            title=f"{title}<br><sup>{display_name}</sup>",
-            height=500,
-            width=750,
-            top_margin=100,
-            right_margin=160,
+            title=full_title,
+            height=600,
+            width=900,
+            top_margin=140,
+            right_margin=260,
+            left_margin=140,
         )
-        yaxis_kwargs: Dict = {}
+        yaxis_kwargs: Dict = {"automargin": True}
         if yaxis_range is not None:
             yaxis_kwargs["range"] = yaxis_range
         fig.update_layout(
-            xaxis_title=f"Time ({time_unit})",
+            title=dict(x=0.5, xanchor="center", y=0.94, yanchor="top", pad=dict(t=10)),
+            xaxis=dict(
+                side="bottom",
+                title=dict(text=f"Time ({time_unit})", standoff=18),
+                automargin=True,
+            ),
             yaxis_title=yaxis_title,
             yaxis=yaxis_kwargs,
             legend=dict(
@@ -131,11 +145,12 @@ class SurvivalVisualizer(BaseVisualizer):
                 yanchor="middle",
                 y=0.5,
                 xanchor="left",
-                x=1.05,
+                x=1.02,
                 bgcolor="rgba(255,255,255,0.9)",
                 bordercolor="gray",
                 borderwidth=1,
-                font=dict(size=10),
+                font=dict(size=11, family=STYLE["font_family"]),
+                itemwidth=30,
             ),
         )
         return fig
@@ -211,19 +226,20 @@ class SurvivalVisualizer(BaseVisualizer):
         )
 
         row_height = 0.035  # fraction of the now-taller figure
-        label_offset = 0.10  # gap to clear x-axis title + tick labels
+        label_offset = 0.12  # gap to clear x-axis title + tick labels
         base_y = -label_offset
+        label_x = -0.16  # paper-coord x for row labels (clear of x=0 column)
 
         # Header row - "No. at risk" label
         fig.add_annotation(
-            x=-0.03,
+            x=label_x,
             y=base_y,
             xref="paper",
             yref="paper",
             text="<b>No. at risk</b>",
             showarrow=False,
             font=dict(size=STYLE["at_risk_font_size"], family=STYLE["font_family"]),
-            xanchor="right",
+            xanchor="left",
             yanchor="top",
         )
 
@@ -238,7 +254,7 @@ class SurvivalVisualizer(BaseVisualizer):
 
             # Cluster label on the left
             fig.add_annotation(
-                x=-0.03,
+                x=label_x,
                 y=y_pos,
                 xref="paper",
                 yref="paper",
@@ -249,7 +265,7 @@ class SurvivalVisualizer(BaseVisualizer):
                     color=color,
                     family=STYLE["font_family"],
                 ),
-                xanchor="right",
+                xanchor="left",
                 yanchor="top",
             )
 

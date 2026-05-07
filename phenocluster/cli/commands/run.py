@@ -1,6 +1,8 @@
-"""`phenocluster run` — execute the phenotype discovery pipeline."""
+"""`phenocluster run` - execute the phenotype discovery pipeline."""
 
+import inspect
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.panel import Panel
@@ -146,6 +148,13 @@ def register(app: typer.Typer) -> None:
             "-q",
             help="Suppress the banner and non-essential output.",
         ),
+        html_report: Optional[bool] = typer.Option(
+            None,
+            "--html-report/--no-html-report",
+            help=(
+                "Generate the static HTML analysis report. Overrides config.generate_html_report."
+            ),
+        ),
     ):
         """
         Run the phenotype discovery pipeline.
@@ -186,6 +195,9 @@ def register(app: typer.Typer) -> None:
             with console.status("[bold cyan]Loading configuration...", spinner="dots"):
                 cfg = _cli_pkg.PhenoClusterConfig.from_yaml(config)
 
+            if html_report is not None:
+                cfg.generate_html_report = bool(html_report)
+
             console.print(_render_config_summary(cfg))
             console.print()
 
@@ -218,11 +230,12 @@ def register(app: typer.Typer) -> None:
                         completed=max(0.0, min(fraction, 1.0)),
                     )
 
-                try:
+                fit_params = inspect.signature(pipeline.fit).parameters
+                if "progress_callback" in fit_params:
                     results = pipeline.fit(
                         df, force_rerun=force_rerun, progress_callback=progress_callback
                     )
-                except TypeError:
+                else:
                     results = pipeline.fit(df, force_rerun=force_rerun)
                 progress.update(task_id, completed=1.0, description="[bold green]Done")
 

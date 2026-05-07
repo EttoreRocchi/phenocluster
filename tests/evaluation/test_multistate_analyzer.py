@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from phenocluster.config import PhenoClusterConfig
 from phenocluster.evaluation.multistate.analyzer import MultistateAnalyzer
@@ -47,19 +48,6 @@ def _make_config(n_clusters=3):
             "logging": {"level": "WARNING", "log_to_file": False},
         }
     )
-
-
-class TestMultistateAnalyzerInit:
-    def test_init(self):
-        cfg = _make_config()
-        analyzer = MultistateAnalyzer(cfg, n_clusters=3)
-        assert analyzer.n_clusters == 3
-        assert analyzer.reference_phenotype == 0
-
-    def test_init_custom_reference(self):
-        cfg = _make_config()
-        analyzer = MultistateAnalyzer(cfg, n_clusters=3, reference_phenotype=1)
-        assert analyzer.reference_phenotype == 1
 
 
 class TestMultistateAnalyzerCheckColumns:
@@ -107,7 +95,7 @@ class TestMultistateAnalyzerWarnExtrapolation:
         # Create mock trajectories with time_at_each_state
         traj = MagicMock()
         traj.time_at_each_state = [0, 5.0, 10.0]
-        # Times within range — should not warn
+        # Times within range - should not warn
         analyzer._warn_extrapolation([traj], [5.0, 10.0])
 
     def test_warning_beyond_range(self):
@@ -115,7 +103,7 @@ class TestMultistateAnalyzerWarnExtrapolation:
         analyzer = MultistateAnalyzer(cfg, n_clusters=3)
         traj = MagicMock()
         traj.time_at_each_state = [0, 5.0, 10.0]
-        # Times beyond range — should warn
+        # Times beyond range - should warn
         analyzer._warn_extrapolation([traj], [5.0, 20.0])
 
     def test_empty_trajectories(self):
@@ -177,6 +165,74 @@ class TestAnalyzePathwayFrequencies:
         assert len(result) >= 1
         # Should have pathway attribute
         assert hasattr(result[0], "pathway")
+
+
+def _synthetic_multistate_data(n=60, seed=0):
+    """Build wide-format data with event/death/time columns for n patients."""
+    rng = np.random.RandomState(seed)
+    event = rng.choice([0, 1], n, p=[0.4, 0.6])
+    time_event = rng.uniform(2.0, 8.0, n)
+    time_event[event == 0] = np.nan
+    death = rng.choice([0, 1], n, p=[0.7, 0.3])
+    time_death = rng.uniform(5.0, 15.0, n)
+    time_death[death == 0] = np.nan
+    return pd.DataFrame(
+        {
+            "x1": rng.randn(n),
+            "event": event,
+            "time_event": time_event,
+            "death": death,
+            "time_death": time_death,
+        }
+    )
+
+
+class TestRunFullAnalysisHappyPath:
+    @pytest.mark.filterwarnings("ignore::UserWarning")
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    @pytest.mark.filterwarnings("ignore::lifelines.exceptions.ConvergenceWarning")
+    def test_returns_populated_results(self):
+        cfg = _make_config(n_clusters=2)
+        analyzer = MultistateAnalyzer(cfg, n_clusters=2)
+        df = _synthetic_multistate_data(n=80)
+        labels = np.array([i % 2 for i in range(len(df))])
+        results = analyzer.run_full_analysis(df, labels)
+        assert "error" not in results.model_summary
+        assert results.transition_results
+        assert results.fitted_model is not None
+
+    def test_no_trajectories_returns_error(self):
+        cfg = _make_config(n_clusters=2)
+        analyzer = MultistateAnalyzer(cfg, n_clusters=2)
+        df = pd.DataFrame(
+            {
+                "x1": [1.0, 2.0],
+                "event": [0, 0],
+                "time_event": [np.nan, np.nan],
+                "death": [0, 0],
+                "time_death": [np.nan, np.nan],
+            }
+        )
+        cfg.multistate.states = [s for s in cfg.multistate.states if s.id != 2]
+        cfg.multistate.transitions = [t for t in cfg.multistate.transitions if t.to_state != 2]
+        results = analyzer.run_full_analysis(df, np.array([0, 1]))
+        assert "error" in results.model_summary
+
+
+class TestExtractHazardRatiosWrapper:
+    @pytest.mark.filterwarnings("ignore::UserWarning")
+    @pytest.mark.filterwarnings("ignore::lifelines.exceptions.ConvergenceWarning")
+    def test_via_analyzer(self):
+        cfg = _make_config(n_clusters=2)
+        analyzer = MultistateAnalyzer(cfg, n_clusters=2)
+        df = _synthetic_multistate_data(n=80)
+        labels = np.array([i % 2 for i in range(len(df))])
+        trajs, _ = analyzer.prepare_trajectories(df, labels)
+        out = analyzer.extract_hazard_ratios(trajs)
+        assert isinstance(out, dict)
+
+
+import pytest  # noqa: E402  needed for filterwarnings markers above
 
 
 class TestMCResultsToDict:

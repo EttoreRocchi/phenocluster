@@ -375,47 +375,83 @@ def _fit_km_for_cluster(cluster_data, time_col, event_col, cluster_id):
     }
 
 
-def _grambsch_therneau_global(cph, cox_df, transform="log"):
-    """Compute the Grambsch-Therneau global Schoenfeld test.
+def _grambsch_therneau_global(cph, cox_df, time_col, transform="log"):
+    """Global Schoenfeld-residual test of the proportional hazards assumption.
 
-    Implements the Grambsch & Therneau global statistic:
+    Computes
 
-    .. math:: T = \\frac{1}{d}\\, G^T I^{-1} G
+    .. math:: T = G^T I^{-1} G \\,/\\, \\sum_k (g_k - \\bar g)^2
 
-    where :math:`G` is the vector of covariance-weighted sums of scaled
-    Schoenfeld residuals over the :math:`d` distinct event times,
-    :math:`I` is the information matrix on the normalised scale, and the
-    time-transform values are centred via
-    :math:`\\text{scalar} = \\sum g^2 - (\\sum g)^2 / d`.
+    distributed approximately as :math:`\\chi^2_p` under the null, where
+    :math:`G_j = \\sum_k (g_k - \\bar g)\\, s_{kj}` for raw Schoenfeld
+    residuals :math:`s_{kj}`, :math:`g_k` is the time transform of the k-th
+    event time, and :math:`I` is the Cox information matrix on the original
+    (un-normalised) scale.
+
+    Parameters
+    ----------
+    cph : CoxPHFitter
+        Fitted lifelines Cox model.
+    cox_df : pd.DataFrame
+        The dataframe used to fit ``cph``; must contain ``time_col``.
+    time_col : str
+        Name of the duration column in ``cox_df``.
+    transform : {"log", "identity", "rank"}, default "log"
+        Time transform applied to event times before the test.
+
+    Returns
+    -------
+    dict or None
+        ``{"test_statistic", "df", "p_value", "transform"}``. Returns
+        ``None`` when the test cannot be evaluated (no events, singular
+        information matrix, or zero variance in the time transform).
     """
-    schoenfeld = cph.compute_residuals(cox_df, kind="schoenfeld")
-    d = schoenfeld.shape[0]
-    p = schoenfeld.shape[1]
+    schoenfeld = cph.compute_residuals(cox_df, kind="scaled_schoenfeld")
+    d, p = schoenfeld.shape
     if d == 0 or p == 0:
         return None
 
-    event_times = schoenfeld.index.values
-    if transform == "log":
-        g = np.log(event_times)
-    else:
-        g = np.asarray(event_times, dtype=float)
+    event_times = cox_df.loc[schoenfeld.index, time_col].to_numpy(dtype=float)
 
-    r = schoenfeld.values
-    Gr = (g[:, None] * r).sum(axis=0)
-    scalar = float((g**2).sum() - (g.sum() ** 2) / d)
+    if transform == "log":
+        valid = event_times > 0
+        if not valid.all():
+            event_times = event_times[valid]
+            schoenfeld = schoenfeld.iloc[np.where(valid)[0]]
+            d = schoenfeld.shape[0]
+            if d == 0:
+                return None
+        g = np.log(event_times)
+    elif transform in ("identity", None):
+        g = event_times
+    elif transform == "rank":
+        g = stats.rankdata(event_times, method="average")
+    else:
+        raise ValueError(f"unknown transform '{transform}'")
+
+    g_centred = g - g.mean()
+    scalar = float(np.sum(g_centred**2))
     if scalar <= 0:
         return None
 
-    norm_std = cph._norm_std.values
-    V_normalised = cph.variance_matrix_.values * np.outer(norm_std, norm_std)
-    try:
-        I_normalised = np.linalg.inv(V_normalised)
-    except np.linalg.LinAlgError:
-        I_normalised = np.linalg.pinv(V_normalised)
+    r = schoenfeld.values
+    Gs = (g_centred[:, None] * r).sum(axis=0)
 
-    T_global = float((Gr @ I_normalised @ Gr) / (scalar * d))
+    norm_std = cph._norm_std.values
+    V_orig = cph.variance_matrix_.values * np.outer(norm_std, norm_std)
+    try:
+        I_orig = np.linalg.inv(V_orig)
+    except np.linalg.LinAlgError:
+        I_orig = np.linalg.pinv(V_orig)
+
+    T_global = float((Gs @ I_orig @ Gs) / (scalar * d))
     p_value = float(stats.chi2.sf(T_global, df=p))
-    return {"test_statistic": T_global, "df": int(p), "p_value": p_value}
+    return {
+        "test_statistic": T_global,
+        "df": int(p),
+        "p_value": p_value,
+        "transform": transform,
+    }
 
 
 def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logger):
@@ -441,7 +477,7 @@ def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logg
             test_results = None
 
         try:
-            global_test = _grambsch_therneau_global(cph, cox_df, transform="log")
+            global_test = _grambsch_therneau_global(cph, cox_df, time_col=time_col, transform="log")
         except Exception as e:
             logger.debug(f"  Global Grambsch-Therneau computation failed: {e}")
             global_test = None

@@ -88,10 +88,13 @@ def _run_single_consensus_iteration(
 def _logit_ci(scores, mean_val, level=0.95):
     """Logit-transformed Wald CI for a [0, 1]-bounded mean.
 
-    Computes the SE of the mean of ``scores``, maps the point
-    estimate to logit space, builds a normal-approximation CI there, and maps
-    back. Avoids the boundary degeneracy of the raw Wald interval clipped at
-    [0, 1] for stability proportions.
+    Computes the SE of the mean of ``scores``, maps the point estimate to
+    logit space, builds a normal-approximation CI there, and maps back.
+    Avoids the boundary degeneracy of the raw Wald interval clipped at
+    ``[0, 1]`` for stability proportions. The asymptotic-normality
+    assumption requires a moderate number of independent runs; for
+    ``n_runs < 50`` or strongly correlated runs the interval may be
+    optimistic.
     """
     arr = np.asarray(scores, dtype=float)
     if arr.size < 2:
@@ -380,7 +383,14 @@ class StabilityAnalyzer:
 
     @staticmethod
     def _compute_consensus_stats(consensus_matrix, results):
-        """Compute mean, std, and 95% CI for consensus stability."""
+        """Compute mean, std, and 95% CI of pairwise consensus stability.
+
+        The stability metric is ``|C(i, j) - 0.5| * 2``, normalised to
+        ``[0, 1]`` (1 means perfect agreement or perfect disagreement; 0
+        means maximum ambiguity at ``C = 0.5``). This is an ambiguity index
+        of the consensus matrix, not the canonical PAC ("Proportion of
+        Ambiguous Clustering"); the public API is preserved for back-compat.
+        """
         stability_values = np.abs(consensus_matrix - 0.5) * 2
         triu_idx = np.triu_indices_from(stability_values, k=1)
         stability_scores = stability_values[triu_idx]

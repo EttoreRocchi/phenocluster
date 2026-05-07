@@ -73,6 +73,7 @@ class FeatureSelectionConfig:
     percentile: float = 50.0
     lasso_alpha: Optional[float] = None
     target_column: Optional[str] = None
+    error_on_outcome_collision: bool = False
     # Populated from global.random_state - not user-facing in YAML
     random_state: int = 42
 

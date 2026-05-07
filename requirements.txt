@@ -1,13 +1,13 @@
 # Core dependencies
 numpy>=1.21.0
 pandas>=2.1.0
-scikit-learn>=1.0.0
+scikit-learn>=1.8.0
 scipy>=1.11.0
 pyyaml>=5.4.0
 joblib>=1.3.0
 
 # Latent class modeling
-stepmix>=2.1.0
+stepmix>=3.0.0
 
 # Statistical inference
 statsmodels>=0.14.0
@@ -22,5 +22,5 @@ rich>=13.0.0
 # Progress bars
 tqdm>=4.62.0
 
-# Survival analysis (descriptive curves + multistate transitions)
+# Survival analysis
 lifelines>=0.30.0

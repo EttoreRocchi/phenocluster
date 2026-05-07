@@ -4,6 +4,7 @@ from .analysis import AnalysisStage
 from .evaluation import EvaluationStage
 from .feature_selection import FeatureSelectionStage
 from .finalization import FinalizationStage
+from .generalization import GeneralizationStage
 from .preprocessing import PreprocessingStage
 from .training import TrainingStage
 
@@ -14,4 +15,5 @@ __all__ = [
     "EvaluationStage",
     "AnalysisStage",
     "FinalizationStage",
+    "GeneralizationStage",
 ]

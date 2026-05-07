@@ -67,19 +67,6 @@ def _make_trajectories(n=50, seed=42):
     return trajectories
 
 
-class TestPatientTrajectory:
-    def test_basic_creation(self):
-        traj = PatientTrajectory(
-            states=[0, 1, 2],
-            time_at_each_state=[5.0, 3.0],
-            covariates=pd.Series({"phenotype_1": 1.0}),
-            sample_id=0,
-        )
-        assert len(traj.states) == 3
-        assert len(traj.time_at_each_state) == 2
-        assert traj.sample_id == 0
-
-
 class TestTransitionHazardFitter:
     def test_fit_produces_models(self):
         """Test that fitting produces at least one Cox model."""

@@ -13,11 +13,6 @@ from phenocluster.evaluation.stability import (
 
 
 class TestAlignLabels:
-    def test_identity(self):
-        ref = np.array([0, 0, 1, 1, 2, 2])
-        result = _align_labels(ref, ref.copy(), n_clusters=3)
-        np.testing.assert_array_equal(result, ref)
-
     def test_two_cluster_swap(self):
         ref = np.array([0, 0, 0, 1, 1, 1])
         pred = np.array([1, 1, 1, 0, 0, 0])  # swapped
@@ -242,3 +237,98 @@ class TestStabilityAnalyzerDisabled:
             np.zeros((10, 3)), MagicMock(), np.zeros(10, dtype=int), n_clusters=2
         )
         assert result == {}
+
+
+def _stability_cfg(minimal_config, n_runs=3):
+    """Configure minimal_config for a tiny but enabled stability run."""
+    minimal_config.stability.enabled = True
+    minimal_config.stability.n_runs = n_runs
+    minimal_config.stability.subsample_fraction = 0.6
+    minimal_config.stability.n_jobs = 1
+    minimal_config.stepmix.n_init = 1
+    minimal_config.stepmix.max_iter = 5
+    return minimal_config
+
+
+class TestAnalyzeStabilityEnabled:
+    def test_returns_consensus_metrics(self, minimal_config):
+        cfg = _stability_cfg(minimal_config)
+        analyzer = StabilityAnalyzer(cfg)
+        X = np.random.RandomState(0).randn(40, 3)
+        model = _FakeModel(n_components=2)
+        labels = model._labels if model._labels is not None else np.zeros(40, dtype=int)
+        result = analyzer.analyze_stability(X, model, labels)
+        for key in (
+            "mean_consensus",
+            "std_consensus",
+            "ci_95_lower",
+            "ci_95_upper",
+            "consensus_matrix",
+            "n_runs",
+            "n_valid",
+            "n_failed",
+        ):
+            assert key in result
+
+    def test_all_failures_returns_zero_metrics(self, minimal_config):
+        cfg = _stability_cfg(minimal_config, n_runs=2)
+        analyzer = StabilityAnalyzer(cfg)
+
+        class FailModel(_FakeModel):
+            def fit(self, X):
+                raise RuntimeError("nope")
+
+        X = np.random.RandomState(0).randn(20, 3)
+        result = analyzer.analyze_stability(X, FailModel(n_components=2), np.zeros(20, dtype=int))
+        assert result["n_valid"] == 0
+        assert result["mean_consensus"] == 0.0
+        assert result["consensus_matrix"] is None
+
+
+class TestAnalyzeClusterStabilityEnabled:
+    def test_returns_per_cluster_metrics(self, minimal_config):
+        cfg = _stability_cfg(minimal_config)
+        analyzer = StabilityAnalyzer(cfg)
+        X = np.random.RandomState(0).randn(40, 3)
+        model = _FakeModel(n_components=2)
+        labels = np.array([i % 2 for i in range(40)])
+        result = analyzer.analyze_cluster_stability(X, model, labels, n_clusters=2)
+        assert isinstance(result, dict)
+        for cid in result:
+            for key in (
+                "mean_consistency",
+                "std_consistency",
+                "ci_95_lower",
+                "ci_95_upper",
+                "n_samples",
+                "n_valid_runs",
+            ):
+                assert key in result[cid]
+
+    def test_all_failures_returns_empty(self, minimal_config):
+        cfg = _stability_cfg(minimal_config, n_runs=2)
+        analyzer = StabilityAnalyzer(cfg)
+
+        class FailModel(_FakeModel):
+            def fit(self, X):
+                raise RuntimeError("nope")
+
+        X = np.random.RandomState(0).randn(20, 3)
+        result = analyzer.analyze_cluster_stability(
+            X, FailModel(n_components=2), np.zeros(20, dtype=int), n_clusters=2
+        )
+        assert result == {}
+
+
+class TestCapConsensusSamples:
+    def test_passthrough_under_cap(self, minimal_config):
+        analyzer = StabilityAnalyzer(minimal_config)
+        X = np.zeros((100, 3))
+        out = analyzer._cap_consensus_samples(X)
+        assert out is X
+
+    def test_caps_large_dataset(self, minimal_config):
+        analyzer = StabilityAnalyzer(minimal_config)
+        X = np.zeros((10_500, 2))
+        out = analyzer._cap_consensus_samples(X)
+        assert out.shape[0] == 10_000

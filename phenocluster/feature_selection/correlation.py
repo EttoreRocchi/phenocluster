@@ -5,6 +5,7 @@ PhenoCluster Correlation-Based Feature Selection
 Remove highly correlated features, keeping the one with higher variance.
 """
 
+import warnings
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -61,6 +62,15 @@ class CorrelationSelector(BaseFeatureSelector):
         numeric_X = X.select_dtypes(include=[np.number])
         all_features = list(X.columns)
         numeric_features = list(numeric_X.columns)
+
+        if numeric_X.isna().any().any():
+            warnings.warn(
+                "CorrelationSelector received NaN values; pandas computes "
+                "correlations pairwise and the resulting matrix may be "
+                "non-positive-definite. Impute before correlation filtering "
+                "for stable redundancy decisions.",
+                stacklevel=2,
+            )
 
         self.correlation_matrix_ = numeric_X.corr(method=self.method)
 

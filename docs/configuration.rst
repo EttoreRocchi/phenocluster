@@ -42,6 +42,10 @@ Project-level settings.
      - int
      - ``42``
      - Global random seed, automatically propagated to model selection, data splitting, and feature selection for full reproducibility
+   * - ``generate_html_report``
+     - bool
+     - ``true``
+     - Whether to render the static HTML analysis report at the end of a run. JSON, CSV, and Plotly figure outputs are written either way. Can be overridden at the command line with ``phenocluster run --html-report`` / ``--no-html-report``.
 
 data
 ----
@@ -64,18 +68,54 @@ Dataset schema and train/test splitting.
      - list[str]
      - ``[]``
      - Names of categorical (discrete) feature columns used for phenotype discovery
+   * - ``split.strategy``
+     - str
+     - ``"random"``
+     - Splitting strategy. One of ``random``, ``temporal``, ``holdout_group``, ``leave_one_group_out``
    * - ``split.test_size``
      - float
      - ``0.2``
-     - Fraction of data held out for testing (0 to 1 exclusive)
+     - Fraction of data held out for testing (0 to 1 exclusive). Used by ``random``
    * - ``split.stratify_by``
      - str | null
      - ``null``
-     - Column name to stratify the train/test split by (ensures balanced representation); ``null`` for random split
+     - Column name to stratify the train/test split by (ensures balanced representation); ``null`` for random split. Used by ``random``
    * - ``split.shuffle``
      - bool
      - ``true``
-     - Whether to shuffle the data before splitting
+     - Whether to shuffle the data before splitting. Used by ``random``
+   * - ``split.time_column``
+     - str | null
+     - ``null``
+     - Name of the date/datetime column. Required when ``strategy="temporal"``
+   * - ``split.time_scheme``
+     - str
+     - ``"cutoff"``
+     - Sub-strategy for ``temporal``. One of ``cutoff``, ``fraction``, ``sliding``, ``expanding``
+   * - ``split.time_cutoff``
+     - str | null
+     - ``null``
+     - Cutoff timestamp; rows with ``time_column <= time_cutoff`` form the derivation set. Required when ``time_scheme="cutoff"``
+   * - ``split.time_test_fraction``
+     - float | null
+     - ``null``
+     - Fraction (0 to 1 exclusive) of the most recent rows used for validation. Required when ``time_scheme="fraction"``
+   * - ``split.n_windows``
+     - int | null
+     - ``null``
+     - Number of validation windows (must be >= 2). Required when ``time_scheme`` is ``sliding`` or ``expanding``
+   * - ``split.group_column``
+     - str | null
+     - ``null``
+     - Column whose values define the groups. Required for ``holdout_group`` and ``leave_one_group_out``
+   * - ``split.holdout_values``
+     - list | null
+     - ``null``
+     - Group values placed in the validation set; all other groups go to derivation. Required for ``holdout_group``
+   * - ``split.min_validation_size``
+     - int
+     - ``25``
+     - Minimum number of rows a validation cohort must contain; smaller cohorts raise an error
 
 .. note::
 
@@ -83,6 +123,12 @@ Dataset schema and train/test splitting.
    Imputation, outlier handling, encoding, and scaling are fit on the
    training set only for model selection. Once K is chosen, the full
    pipeline is refitted on the entire cohort for final analysis.
+
+.. note::
+
+   Legacy configurations that omit ``split.strategy`` keep working unchanged:
+   ``random`` is the default and the only fields it consults are
+   ``test_size``, ``stratify_by``, and ``shuffle``.
 
 preprocessing.row_filter
 ------------------------
@@ -236,7 +282,11 @@ Optional feature selection to reduce dimensionality before LCA/LPA.
    * - ``target_column``
      - str | null
      - ``null``
-     - Target column name required by supervised methods (``mutual_info``, ``lasso``)
+     - Target column name required by supervised methods (``mutual_info``, ``lasso``). When this column is also an outcome (``outcome.outcome_columns``) or a survival ``time_column``/``event_column``, the pipeline emits a warning at validation time because supervised feature selection then biases cluster-vs-outcome estimates toward optimistic associations.
+   * - ``error_on_outcome_collision``
+     - bool
+     - ``false``
+     - When ``true``, the warning above is promoted to a hard ``ValueError``. Leave at ``false`` for sensitivity analyses that intentionally mix the target with an outcome.
 
 model
 -----
@@ -515,6 +565,68 @@ is applied to an external dataset to assess phenotype reproducibility.
      - str | null
      - ``null``
      - Path to the external cohort CSV file
+
+generalizability
+----------------
+
+Temporal and multi-site generalizability assessment (v0.3.0). See
+:doc:`generalizability` for the full reference; the table below lists the
+top-level toggles. Sub-blocks ``temporal``, ``multisite``,
+``external_cohorts``, ``calibration``, ``drift``, and
+``outcome_concordance`` are documented in detail there.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 20 20 35
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - ``enabled``
+     - bool
+     - ``false``
+     - Run the generalizability stage. Requires at least one of ``temporal``, ``multisite``, or ``external_cohorts`` to be set.
+   * - ``training_scope``
+     - ``"per_split"`` | ``"global"``
+     - ``"per_split"``
+     - For each in-CSV (derivation, validation) split, ``per_split`` fits a fresh preprocessor and StepMix on derivation rows only. ``global`` reuses the pipeline's full-cohort model. External-CSV cohorts always use the global model.
+   * - ``feature_selector_scope``
+     - ``"auto"`` | ``"global"`` | ``"per_split"``
+     - ``"auto"``
+     - Whether to refit the feature selector per split. ``auto`` refits when safe (unsupervised methods, or supervised methods whose target column does not collide with concordance outcomes) and reuses the global selector with a warning otherwise. ``per_split`` raises when a safe refit is not possible. ``global`` always reuses the pipeline's selector. Each cohort report carries a ``feature_selector_mode`` field reflecting the resolved choice.
+   * - ``refit``
+     - bool
+     - ``true``
+     - When ``true``, refit StepMix on the validation cohort and Hungarian-align with the derivation labels (yields ARI / NMI / matched accuracy plus calibration). When ``false``, apply-only.
+   * - ``min_validation_size_for_refit``
+     - int
+     - ``100``
+     - Skip the validation-side refit when the validation cohort has fewer rows than this.
+   * - ``temporal``
+     - object | null
+     - ``null``
+     - Temporal split spec. Fields: ``time_column``, ``scheme`` (``cutoff`` | ``fraction`` | ``sliding`` | ``expanding``), ``time_cutoff``, ``time_test_fraction``, ``n_windows``.
+   * - ``multisite``
+     - object | null
+     - ``null``
+     - Multi-site split spec. Fields: ``site_column``, ``scheme`` (``logo`` | ``holdout`` | ``pairwise``), ``holdout_sites``, ``min_site_size``.
+   * - ``external_cohorts``
+     - list of objects
+     - ``[]``
+     - Each entry: ``{path, label, kind}`` with ``kind`` in ``{"temporal", "site", "external"}``.
+   * - ``calibration``
+     - object
+     - ``{enabled: true, n_bins: 10, strategy: "quantile"}``
+     - Brier / ECE / reliability-curve settings (refit-and-match mode only).
+   * - ``drift``
+     - object
+     - ``{enabled: true, n_bins: 10, top_k: 20}``
+     - Per-feature drift table (PSI, KS, chi-square).
+   * - ``outcome_concordance``
+     - object
+     - ``{enabled: true, fdr_method: "bh", alpha: 0.05}``
+     - Cross-cohort OR/HR concordance with FDR-corrected per-phenotype delta tests.
 
 cache
 -----

@@ -66,3 +66,6 @@ class PipelineContext:
 
     # External validation
     external_validation_results: Dict = field(default_factory=dict)
+
+    # Generalizability (v0.3.0): keys "temporal", "multisite", "summary"
+    generalizability_results: Dict = field(default_factory=dict)

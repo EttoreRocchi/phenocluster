@@ -255,9 +255,9 @@ def _compute_mcar_statistic(numeric_data, pattern_strings, unique_patterns):
     Returns
     -------
     chi_square : float
-        Little's d² statistic.
+        Little's d^2 statistic.
     df : int
-        Degrees of freedom (`Σ_g k_g - k`, where `k_g` is the number of
+        Degrees of freedom (`sum_g k_g - k`, where `k_g` is the number of
         observed variables in pattern `g` and `k` is the total number of
         variables).
     status : str

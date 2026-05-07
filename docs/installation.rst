@@ -14,6 +14,16 @@ From PyPI
 
    pip install phenocluster
 
+To enable the optional Streamlit dashboard
+(:doc:`dashboard`):
+
+.. code-block:: bash
+
+   pip install 'phenocluster[dashboard]'
+
+The core package does **not** depend on Streamlit; the extras pull in
+``streamlit`` and ``watchdog`` only when you opt in.
+
 From source
 -----------
 

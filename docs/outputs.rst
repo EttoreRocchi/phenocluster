@@ -14,7 +14,7 @@ Main outputs
    * - File
      - Description
    * - ``analysis_report.html``
-     - Comprehensive interactive HTML report with all results and visualisations
+     - Comprehensive interactive HTML report with all results and visualisations. Skipped when ``generate_html_report: false`` (or ``--no-html-report`` on the CLI). JSON/CSV outputs are still written.
    * - ``cluster_statistics.json``
      - Phenotype sizes, feature distributions, classification quality metrics
    * - ``outcome_results.json``
@@ -41,6 +41,16 @@ Main outputs
      - Train/test split details (sample counts, stratification)
    * - ``results/external_validation_results.json``
      - External validation results (when ``external_validation.enabled: true``)
+   * - ``results/temporal_validation_results.json``
+     - Temporal generalizability cohorts (v0.3.0, when ``generalizability.temporal`` is set)
+   * - ``results/multisite_validation_results.json``
+     - Multi-site (LOGO / holdout) cohorts (v0.3.0, when ``generalizability.multisite`` is set)
+   * - ``results/external_cohorts_results.json``
+     - External-CSV cohorts (v0.3.0, one entry per file listed under ``generalizability.external_cohorts``)
+   * - ``results/generalizability_summary.json``
+     - Aggregate ARI / PSI per kind plus the resolved ``training_scope`` (v0.3.0)
+   * - ``data/generalizability/``
+     - Per-cohort ``cluster_distribution_<label>.csv`` and ``drift_<label>.csv`` (v0.3.0)
    * - ``phenocluster.log``
      - Pipeline execution log (when ``logging.log_to_file: true``)
    * - ``artifacts/``
@@ -82,3 +92,11 @@ Plotly). PhenoCluster uses the colorblind-safe Wong (2011) palette.
      - Time-varying probability of being in each state
    * - Pathway frequency
      - Most common clinical pathways from Monte Carlo simulation
+   * - Cohort prevalence heatmap
+     - Phenotype prevalence (%) across temporal or multi-site cohorts (v0.3.0)
+   * - Drift bar chart
+     - Top-K features by absolute PSI per cohort (v0.3.0)
+   * - OR concordance scatter
+     - Derivation vs validation log(OR) per phenotype with identity line (v0.3.0)
+   * - LOGO / window forest
+     - Per-cohort refit-and-match ARI dot plot (v0.3.0)

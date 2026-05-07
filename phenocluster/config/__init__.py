@@ -27,6 +27,15 @@ from .data import (
     OutlierConfig,
     RowFilterConfig,
 )
+from .generalizability import (
+    CalibrationSubConfig,
+    DriftSubConfig,
+    ExternalCohortSpec,
+    GeneralizabilityConfig,
+    MultiSiteSpec,
+    OutcomeConcordanceSubConfig,
+    TemporalSpec,
+)
 from .model import (
     FeatureSelectionConfig,
     ModelSelectionConfig,
@@ -72,6 +81,13 @@ __all__ = [
     "CategoricalFlowConfig",
     "ReferenceConfig",
     "ExternalValidationConfig",
+    "GeneralizabilityConfig",
+    "TemporalSpec",
+    "MultiSiteSpec",
+    "CalibrationSubConfig",
+    "DriftSubConfig",
+    "OutcomeConcordanceSubConfig",
+    "ExternalCohortSpec",
     "_config_to_dict",
     "_propagate_random_state",
     "_unpack_multistate_monte_carlo",

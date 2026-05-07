@@ -1,4 +1,4 @@
-"""Data quality assessor — orchestrates assessment and reporting."""
+"""Data quality assessor - orchestrates assessment and reporting."""
 
 import json
 from pathlib import Path

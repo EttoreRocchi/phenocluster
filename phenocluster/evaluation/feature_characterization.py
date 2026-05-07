@@ -100,8 +100,15 @@ class FeatureCharacterizer:
         return result
 
     def _hedges_g_star(self, df, labels, col, cluster_id):
-        """Compute Hedges' g* (small-sample-corrected) effect size with Welch variance
-        for a cluster vs. rest comparison on a single continuous feature.
+        """Welch-consistent Hedges' g* effect size for a cluster vs. rest comparison.
+
+        Uses the unweighted average standard deviation
+        ``s_avg = sqrt((s1**2 + s2**2) / 2)`` as the denominator and the
+        Welch-Satterthwaite degrees of freedom for the small-sample J(df)
+        correction. This differs from the classical pooled-SD Hedges' g; the
+        two coincide when ``n1 == n2`` and ``s1 == s2``. The average-SD form
+        is more robust to heteroscedasticity and is appropriate for the
+        cluster-vs-rest setting where variances often differ.
         """
         mask = labels == cluster_id
         c_data = df.loc[mask, col].dropna()
@@ -121,7 +128,7 @@ class FeatureCharacterizer:
         mean_diff = float(c_data.mean()) - float(r_data.mean())
         d_welch = mean_diff / s_avg
 
-        # Welch–Satterthwaite degrees of freedom
+        # Welch-Satterthwaite degrees of freedom
         denom = (s1**2 / n1) ** 2 / (n1 - 1) + (s2**2 / n2) ** 2 / (n2 - 1)
         if denom > 0:
             df_w = ((s1**2 / n1) + (s2**2 / n2)) ** 2 / denom
@@ -259,7 +266,7 @@ class FeatureCharacterizer:
 
         contingency = pd.crosstab(cat_valid, cluster_valid)
         try:
-            chi2, p_val, _, _ = stats.chi2_contingency(contingency)
+            chi2, p_val, _, _ = stats.chi2_contingency(contingency, correction=False)
         except ValueError:
             return (0.0, None)
 

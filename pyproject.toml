@@ -47,12 +47,17 @@ phenocluster = "phenocluster.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
     "ruff>=0.4.0",
 ]
 docs = [
     "sphinx>=7.0",
     "sphinx-click>=5.0",
     "furo",
+]
+dashboard = [
+    "streamlit>=1.30",
+    "watchdog",
 ]
 
 [tool.setuptools.dynamic]
@@ -83,9 +88,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-"phenocluster/pipeline.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -15,10 +15,15 @@ from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency
 
 from ..config import PhenoClusterConfig
 from ..utils.logging import get_logger
+from .generalizability.prevalence import (
+    chi2_cohort_comparison as _chi2_cohort_comparison_helper,
+)
+from .generalizability.prevalence import (
+    cluster_distribution as _cluster_distribution_helper,
+)
 
 
 class ExternalValidator:
@@ -143,18 +148,8 @@ class ExternalValidator:
         return results
 
     def _compute_cluster_distribution(self, labels: np.ndarray) -> Dict[int, Dict]:
-        """Compute cluster distribution statistics."""
-        unique, counts = np.unique(labels, return_counts=True)
-        total = len(labels)
-
-        distribution = {}
-        for cluster_id, count in zip(unique, counts):
-            distribution[int(cluster_id)] = {
-                "count": int(count),
-                "percentage": float(count / total * 100),
-            }
-
-        return distribution
+        """Delegate to :func:`generalizability.prevalence.cluster_distribution`."""
+        return _cluster_distribution_helper(labels)
 
     def _compare_outcomes(
         self,
@@ -266,45 +261,5 @@ class ExternalValidator:
         deriv_counts: Dict[int, Dict],
         ext_counts: Dict[int, Dict],
     ) -> Optional[Dict]:
-        """
-        Run a chi-square test comparing outcome counts across cohorts.
-
-        Builds a 2 x K contingency table (rows = cohort, columns = cluster)
-        with cells [n_positive, n_total - n_positive].
-
-        Returns None when the table cannot be constructed (e.g. zero totals).
-        """
-        cluster_ids = sorted(set(deriv_counts.keys()) & set(ext_counts.keys()))
-        if not cluster_ids:
-            return None
-
-        # Build a 2-by-2K contingency table where each cluster contributes two
-        # columns: positive count and negative count, with one row per cohort
-        # (derivation vs external). This layout lets a single chi-square test
-        # capture distribution shift across all clusters simultaneously.
-
-        # Build 2 x (2*K) table: for each cluster, [positive, negative] per cohort
-        row_deriv = []
-        row_ext = []
-        for cid in cluster_ids:
-            d = deriv_counts[cid]
-            e = ext_counts[cid]
-            d_pos = d.get("n_positive", 0)
-            d_tot = d.get("n_total", 0)
-            e_pos = e.get("n_positive", 0)
-            e_tot = e.get("n_total", 0)
-            row_deriv.extend([d_pos, d_tot - d_pos])
-            row_ext.extend([e_pos, e_tot - e_pos])
-
-        table = np.array([row_deriv, row_ext])
-
-        # Skip if any column sums are zero (chi2 undefined)
-        col_sums = table.sum(axis=0)
-        if np.any(col_sums == 0) or table.sum() == 0:
-            return None
-
-        try:
-            stat, p, _, _ = chi2_contingency(table)
-            return {"statistic": float(stat), "p_value": float(p)}
-        except ValueError:
-            return None
+        """Delegate to :func:`generalizability.prevalence.chi2_cohort_comparison`."""
+        return _chi2_cohort_comparison_helper(deriv_counts, ext_counts)

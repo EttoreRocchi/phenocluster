@@ -24,22 +24,6 @@ def _stepfunc(x: np.ndarray, y: np.ndarray) -> interp1d:
     )
 
 
-def _break_ties(
-    t: np.ndarray,
-    eps_max: float = 0.0001,
-    rng: Optional[np.random.RandomState] = None,
-) -> np.ndarray:
-    """Break tied event times by adding small random epsilon."""
-    if rng is None:
-        rng = np.random.RandomState(42)
-    _, inverse, count = np.unique(t, return_inverse=True, return_counts=True)
-    tied_idx = np.where(count[inverse] > 1)[0]
-    t_new = t.copy().astype(float)
-    eps = rng.uniform(0.0, eps_max, size=len(tied_idx))
-    np.add.at(t_new, tied_idx, eps)
-    return t_new
-
-
 def _check_ph_assumption(cox, event_df, origin, target, logger):
     """Check proportional hazards assumption (diagnostic only)."""
     try:
@@ -158,13 +142,18 @@ class TransitionHazardFitter:
         event_df.loc[~is_event, "target_state"] = 0
         event_df.loc[is_event, "target_state"] = 1
 
-        event_df["time_transition_to_target"] = _break_ties(
-            event_df["time_transition_to_target"].values
-        )
         event_df["time_transition_to_target"] = event_df["time_transition_to_target"].clip(
             lower=1e-6
         )
         event_df["time_entry_to_origin"] = event_df["time_entry_to_origin"].clip(lower=0)
+        median_sojourn = float(np.median(event_df["time_transition_to_target"]))
+        if median_sojourn > 0 and 1e-6 > 1e-2 * median_sojourn:
+            if self.logger:
+                self.logger.warning(
+                    f"origin={origin}->target={target}: numerical floor 1e-6 is within "
+                    f"two orders of magnitude of median sojourn ({median_sojourn:.4g}); "
+                    "consider rescaling time units."
+                )
 
         mask = event_df["time_entry_to_origin"] >= event_df["time_transition_to_target"]
         event_df.loc[mask, "time_entry_to_origin"] = (

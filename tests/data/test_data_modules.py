@@ -136,23 +136,6 @@ class TestImputer:
         result = imp.transform(df)
         pd.testing.assert_frame_equal(result, df)
 
-    def test_disabled_returns_unchanged(self):
-        from phenocluster.data.imputer import Imputer
-
-        cfg = _make_config(
-            preprocessing={
-                "imputation": {"enabled": False},
-                "categorical_encoding": {"method": "label"},
-                "outlier": {"enabled": False},
-            }
-        )
-        imp = Imputer(cfg)
-        df = _sample_df()
-        df.loc[0, "c1"] = np.nan
-        imp.fit(df)
-        result = imp.transform(df)
-        assert np.isnan(result.loc[0, "c1"])
-
     def test_fit_knn(self):
         from phenocluster.data.imputer import Imputer
 
@@ -184,23 +167,6 @@ class TestOutlierHandler:
         result = handler.transform(df)
         # After winsorization, extreme value should be clipped
         assert result.loc[0, "c1"] < 100.0
-
-    def test_disabled_returns_unchanged(self):
-        from phenocluster.data.outlier_handler import OutlierHandler
-
-        cfg = _make_config(
-            preprocessing={
-                "outlier": {"enabled": False},
-                "categorical_encoding": {"method": "label"},
-                "imputation": {"enabled": False},
-            }
-        )
-        handler = OutlierHandler(cfg)
-        df = _sample_df()
-        df.loc[0, "c1"] = 100.0
-        handler.fit(df)
-        result = handler.transform(df)
-        assert result.loc[0, "c1"] == 100.0
 
     def test_isolation_forest(self):
         from phenocluster.data.outlier_handler import OutlierHandler

@@ -1,4 +1,4 @@
-"""`phenocluster version` — show version banner with links."""
+"""`phenocluster version` - show version banner with links."""
 
 import typer
 

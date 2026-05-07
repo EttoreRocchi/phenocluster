@@ -140,3 +140,39 @@ class TestContingencyTests:
             and "p_value_contingency_method" in result["outcome1"][1]
         ):
             assert result["outcome1"][1]["p_value_contingency_method"] == "chi-square"
+
+
+class TestOutcomeAnalyzerMissingValues:
+    def test_complete_case_handling(self):
+        cfg = _make_config()
+        analyzer = OutcomeAnalyzer(cfg, n_clusters=2)
+        df = pd.DataFrame({"outcome1": [0, 1, np.nan, 1, 0, 1, 0, 1, np.nan, 1]})
+        labels = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
+        out = analyzer.analyze_outcomes(df, labels)
+        assert "outcome1" in out
+
+
+class TestForcedFisherOutcomeTest:
+    def test_force_fisher(self):
+        cfg = _make_config()
+        cfg.inference.outcome_test = "fisher"
+        analyzer = OutcomeAnalyzer(cfg, n_clusters=2)
+        df, _ = _make_outcome_data(n=120)
+        labels = np.array([i % 2 for i in range(120)])
+        result = analyzer.analyze_outcomes(df, labels)
+        if (
+            1 in result.get("outcome1", {})
+            and "p_value_contingency_method" in result["outcome1"][1]
+        ):
+            assert result["outcome1"][1]["p_value_contingency_method"] == "Fisher's exact"
+
+
+class TestOutcomeAnalyzerEmptyCluster:
+    def test_empty_reference_cluster(self):
+        cfg = _make_config()
+        analyzer = OutcomeAnalyzer(cfg, n_clusters=3)
+        df = pd.DataFrame({"outcome1": [0, 1, 0, 1]})
+        labels = np.array([1, 1, 2, 2])
+        result = analyzer.analyze_outcomes(df, labels, reference_phenotype=0)
+        assert "outcome1" in result
+        assert result["outcome1"][0]["prevalence"] == 0

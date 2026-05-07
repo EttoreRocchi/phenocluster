@@ -67,12 +67,16 @@ class Visualizer:
         show_significance=True,
         title=None,
     ):
+        if title is None:
+            return self._heatmap.create_heatmap(df, labels, consensus_matrix, show_significance)
         return self._heatmap.create_heatmap(df, labels, consensus_matrix, show_significance, title)
 
     def create_categorical_flow_plots(self, df, labels):
         return self._heatmap.create_categorical_flow_plots(df, labels)
 
     def create_categorical_heatmap(self, df, labels, title=None):
+        if title is None:
+            return self._heatmap.create_categorical_heatmap(df, labels)
         return self._heatmap.create_categorical_heatmap(df, labels, title)
 
     def create_classification_quality_plot(
@@ -81,6 +85,8 @@ class Visualizer:
         labels,
         title=None,
     ):
+        if title is None:
+            return self._quality.create_classification_quality_plot(posterior_probs, labels)
         return self._quality.create_classification_quality_plot(posterior_probs, labels, title)
 
     def create_consensus_matrix_plot(
@@ -89,6 +95,8 @@ class Visualizer:
         labels,
         title=None,
     ):
+        if title is None:
+            return self._quality.create_consensus_matrix_plot(consensus_matrix, labels)
         return self._quality.create_consensus_matrix_plot(consensus_matrix, labels, title)
 
     def create_kaplan_meier_plot(
@@ -97,6 +105,8 @@ class Visualizer:
         target_name,
         title=None,
     ):
+        if title is None:
+            return self._survival.create_kaplan_meier_plot(survival_result, target_name)
         return self._survival.create_kaplan_meier_plot(survival_result, target_name, title)
 
     def create_nelson_aalen_plot(
@@ -105,6 +115,8 @@ class Visualizer:
         target_name,
         title=None,
     ):
+        if title is None:
+            return self._survival.create_nelson_aalen_plot(survival_result, target_name)
         return self._survival.create_nelson_aalen_plot(survival_result, target_name, title)
 
     def create_odds_ratio_forest_plot(
@@ -159,6 +171,7 @@ class Visualizer:
         posterior_probs_test: Optional[np.ndarray] = None,
         labels_test: Optional[np.ndarray] = None,
         reference_phenotype: int = 0,
+        generalizability_results: Optional[Dict] = None,
     ) -> Dict[str, go.Figure]:
         """
         Create all visualizations.
@@ -197,12 +210,10 @@ class Visualizer:
 
         plots: Dict[str, go.Figure] = {}
 
-        # 1. Cluster distribution (always created)
         dist_plot = self.create_cluster_distribution(labels)
         if dist_plot:
             plots["cluster_distribution"] = dist_plot
 
-        # 2. Classification quality (entropy-based, appropriate for LCA/LPA)
         if posterior_probs_test is not None and labels_test is not None:
             quality_plot = self.create_classification_quality_plot(
                 posterior_probs_test,
@@ -216,7 +227,6 @@ class Visualizer:
             if quality_plot:
                 plots["classification_quality"] = quality_plot
 
-        # 3. Consensus matrix (if stability analysis was run)
         consensus_matrix = None
         if stability_results and "consensus_matrix" in stability_results:
             consensus_matrix = stability_results["consensus_matrix"]
@@ -224,24 +234,20 @@ class Visualizer:
             if consensus_plot:
                 plots["consensus_matrix"] = consensus_plot
 
-        # 4. Enhanced heatmap for continuous variables
         if self.config.continuous_columns:
             heatmap = self.create_heatmap(df, labels, consensus_matrix=consensus_matrix)
             if heatmap:
                 plots["heatmap_continuous"] = heatmap
 
-        # 5. Categorical flow plots (heatmap and/or Sankey diagrams)
         if self.config.categorical_columns:
             categorical_flow_plots = self.create_categorical_flow_plots(df, labels)
             plots.update(categorical_flow_plots)
 
-        # 6. Model selection plot
         if selection_results and "all_results" in selection_results:
             model_plot = self.create_model_selection_plot(selection_results)
             if model_plot:
                 plots["model_selection"] = model_plot
 
-        # 7. Odds ratio forest plot
         if outcome_results:
             forest_plot = self.create_odds_ratio_forest_plot(
                 outcome_results,
@@ -251,7 +257,6 @@ class Visualizer:
             if forest_plot:
                 plots["forest_plot_outcomes"] = forest_plot
 
-        # 8. Kaplan-Meier and Nelson-Aalen survival curves
         if survival_results:
             for target_name, target_results in survival_results.items():
                 if target_name.endswith("_weighted"):
@@ -268,7 +273,6 @@ class Visualizer:
                 if na_plot:
                     plots[f"nelson_aalen_{target_name}"] = na_plot
 
-        # 9. Multistate analysis plots
         if multistate_results:
             pathway_results = multistate_results.get("pathway_results", [])
             if pathway_results:
@@ -295,6 +299,16 @@ class Visualizer:
                 state_diagram = self.create_state_diagram(transition_results)
                 if state_diagram:
                     plots["multistate_state_diagram"] = state_diagram
+
+        if generalizability_results:
+            from ._generalization import create_all_generalizability_plots
+
+            top_k = getattr(getattr(self.config, "generalizability", None), "drift", None)
+            top_k_int = int(getattr(top_k, "top_k", 20)) if top_k is not None else 20
+            gen_plots = create_all_generalizability_plots(
+                generalizability_results, drift_top_k=top_k_int
+            )
+            plots.update(gen_plots)
 
         self.logger.info(f"Created {len(plots)} visualization(s)")
 
