@@ -160,7 +160,7 @@ pip install 'phenocluster[dashboard]'
 phenocluster dashboard ./results/
 ```
 
-Streamlit launches at `http://127.0.0.1:8501` with tabs for phenotype distribution, outcomes, survival, generalizability, and a per-cohort drift explorer.
+Streamlit launches at `http://127.0.0.1:8501` with tabs for an Overview, Phenotypes, Outcomes, Survival, Multistate, Generalizability, and a per-cohort Drift explorer.
 
 ## Pipeline overview
 
@@ -176,7 +176,8 @@ PhenoCluster executes the following stages in order:
 8. **Outcome association.** Logistic regression for binary outcomes with FDR-corrected p-values (optional).
 9. **Survival analysis.** Kaplan-Meier curves, Nelson-Aalen estimators, log-rank tests, and Cox PH hazard ratios (optional).
 10. **Multistate modelling.** Transition-specific Cox PH models, transition hazard ratios, and Monte Carlo simulation (optional).
-11. **Report generation.** Interactive HTML report with all figures and tables.
+11. **Temporal / multi-site generalizability.** Re-evaluate the derivation phenotypes on later time windows, held-out sites, and external CSVs; report ARI / NMI / matched accuracy, calibration, drift, and OR/HR concordance (optional, v0.3.0).
+12. **Report generation.** Interactive HTML report with all figures and tables.
 
 ## CLI reference
 
@@ -187,7 +188,7 @@ PhenoCluster executes the following stages in order:
 | `phenocluster validate-config -c CONFIG [-d DATA]` | Validate config structure; cross-check columns against data |
 | `phenocluster list-profiles` | List available configuration profile templates |
 | `phenocluster show-profile NAME` | Print the resolved YAML for a profile with syntax highlighting |
-| `phenocluster dashboard RESULTS_DIR [--port 8501] [--host 127.0.0.1]` | Launch the optional Streamlit dashboard (requires `pip install 'phenocluster[dashboard]'`) |
+| `phenocluster dashboard RESULTS_DIR [--port 8501] [--host 127.0.0.1] [--headless/--browser]` | Launch the optional Streamlit dashboard (requires `pip install 'phenocluster[dashboard]'`) |
 | `phenocluster version` | Show version, repository link, and documentation link |
 
 ## Configuration profiles
@@ -208,13 +209,6 @@ See the full [Configuration Reference](https://ettorerocchi.github.io/phenoclust
 
 Full documentation (statistical methods, configuration reference, output descriptions) is available at **[ettorerocchi.github.io/phenocluster](https://ettorerocchi.github.io/phenocluster)**.
 
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest tests/ -v
-```
-
 ## License
 
 This project is licensed under the [MIT](LICENSE) License.
@@ -224,7 +218,7 @@ This project is licensed under the [MIT](LICENSE) License.
 If you use **PhenoCluster** in your research, please cite:
 
 ```bibtex
-
+Available soon.
 ```
 
 ## Acknowledgment
