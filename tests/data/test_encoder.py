@@ -162,3 +162,48 @@ class TestEncoderNoCategorical:
         enc.fit(df)
         out = enc.transform(df)
         assert list(out.columns) == ["x"]
+
+
+class TestNumericCategoricalDtypeStability:
+    """A cohort with missing values reads back as float, one without as int.
+
+    Both spellings of the same code must land on the same label, otherwise the
+    fitted encoder treats the whole validation cohort as unknown categories.
+    """
+
+    def test_float_and_int_codes_share_labels_label_encoding(self, tmp_path):
+        cfg = _config("label", tmp_path)
+        train = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "cat": [0.0, 1.0, 1.0, np.nan]})
+        validation = pd.DataFrame({"x": [5.0, 6.0], "cat": [0, 1]})
+        enc = Encoder(cfg)
+        enc.fit(train)
+        assert set(enc.label_encoders["cat"].classes_) == {"0", "1"}
+        out = enc.transform(validation)
+        assert out["cat_encoded"].tolist() == [0.0, 1.0]
+
+    def test_float_and_int_codes_share_labels_onehot(self, tmp_path):
+        cfg = _config("onehot", tmp_path)
+        train = pd.DataFrame({"x": [1.0, 2.0, 3.0], "cat": [0.0, 1.0, np.nan]})
+        validation = pd.DataFrame({"x": [4.0], "cat": [1]})
+        enc = Encoder(cfg)
+        enc.fit(train)
+        out = enc.transform(validation)
+        assert out["cat_1"].iloc[0] == 1.0
+
+    def test_float_and_int_codes_share_labels_frequency(self, tmp_path):
+        cfg = _config("frequency", tmp_path)
+        train = pd.DataFrame({"x": [1.0, 2.0, 3.0], "cat": [0.0, 0.0, 1.0]})
+        validation = pd.DataFrame({"x": [4.0], "cat": [0]})
+        enc = Encoder(cfg)
+        enc.fit(train)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = enc.transform(validation)
+        assert out["cat_encoded"].iloc[0] == pytest.approx(2 / 3)
+
+    def test_non_integral_values_keep_their_labels(self, tmp_path):
+        cfg = _config("label", tmp_path)
+        train = pd.DataFrame({"x": [1.0, 2.0], "cat": [1.5, 2.5]})
+        enc = Encoder(cfg)
+        enc.fit(train)
+        assert set(enc.label_encoders["cat"].classes_) == {"1.5", "2.5"}

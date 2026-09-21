@@ -213,3 +213,5 @@ NOTES.md
 *.joblib
 *_data/
 paper/
+temporal_val_analyses/
+*.xlsx

@@ -5,10 +5,31 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
 from ..config import PhenoClusterConfig
 from ..utils.logging import get_logger
+
+
+def canonical_labels(series: pd.Series) -> pd.Series:
+    """Render a categorical column as dtype-stable string labels.
+
+    A 0/1 column read from CSV is float when that file has missing values and
+    integer when it has none, so a plain ``astype(str)`` yields ``"0.0"`` for
+    one cohort and ``"0"`` for another. The fitted encoder would then treat
+    every value of the second cohort as an unknown category and fall back to
+    the modal one. Integral numeric values are rendered without the decimal
+    part so both spellings collapse onto the same label.
+    """
+    if is_bool_dtype(series) or not is_numeric_dtype(series):
+        return series.astype(str)
+    numeric = pd.to_numeric(series, errors="coerce")
+    integral = numeric.notna() & (numeric % 1 == 0)
+    out = series.astype(str)
+    if integral.any():
+        out.loc[integral] = numeric.loc[integral].astype("int64").astype(str)
+    return out
 
 
 class Encoder:
@@ -52,7 +73,7 @@ class Encoder:
         for col in self.config.categorical_columns:
             if col in df.columns:
                 nan_mask = df[col].isna()
-                non_null = df.loc[~nan_mask, col].astype(str)
+                non_null = canonical_labels(df.loc[~nan_mask, col])
                 self._category_modes[col] = non_null.mode().iloc[0] if len(non_null) > 0 else None
                 le = LabelEncoder()
                 le.fit(non_null)
@@ -66,7 +87,7 @@ class Encoder:
             sparse_output=False,
             handle_unknown=self.config.categorical_encoding.handle_unknown,
         )
-        cat_data = df[self.config.categorical_columns].fillna("_MISSING").astype(str)
+        cat_data = self._canonical_frame(df).fillna("_MISSING")
         self.onehot_encoder.fit(cat_data)
 
         encoded_cols = []
@@ -80,7 +101,8 @@ class Encoder:
     def _fit_frequency(self, df):
         for col in self.config.categorical_columns:
             if col in df.columns:
-                self.frequency_encodings[col] = df[col].value_counts(normalize=True).to_dict()
+                labels = canonical_labels(df.loc[df[col].notna(), col])
+                self.frequency_encodings[col] = labels.value_counts(normalize=True).to_dict()
 
         self.feature_columns = self.config.continuous_columns.copy()
         self.feature_columns += [f"{col}_encoded" for col in self.config.categorical_columns]
@@ -111,7 +133,7 @@ class Encoder:
             if col in df.columns and col in self.label_encoders:
                 le = self.label_encoders[col]
                 nan_mask = df[col].isna()
-                non_null = df.loc[~nan_mask, col].astype(str)
+                non_null = canonical_labels(df.loc[~nan_mask, col])
 
                 if len(non_null) > 0:
                     known_classes = set(le.classes_)
@@ -134,7 +156,7 @@ class Encoder:
     def _transform_onehot(self, df):
         if self.onehot_encoder is None:
             raise RuntimeError("OneHotEncoder not fitted. Call fit() first.")
-        cat_data = df[self.config.categorical_columns].fillna("_MISSING").astype(str)
+        cat_data = self._canonical_frame(df).fillna("_MISSING")
         encoded_array = self.onehot_encoder.transform(cat_data)
 
         encoded_cols = []
@@ -148,7 +170,8 @@ class Encoder:
     def _transform_frequency(self, df):
         for col in self.config.categorical_columns:
             if col in df.columns and col in self.frequency_encodings:
-                mapped = df[col].map(self.frequency_encodings[col])
+                mapped = canonical_labels(df[col]).map(self.frequency_encodings[col])
+                mapped[df[col].isna()] = np.nan
                 n_unknown = mapped.isna().sum() - df[col].isna().sum()
                 if n_unknown > 0:
                     warnings.warn(
@@ -185,6 +208,14 @@ class Encoder:
 
         available = [c for c in feature_cols if c in df.columns]
         return df[available].values
+
+    def _canonical_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Return the categorical block with dtype-stable labels, NaN preserved."""
+        block = {}
+        for col in self.config.categorical_columns:
+            labels = canonical_labels(df[col])
+            block[col] = labels.where(df[col].notna())
+        return pd.DataFrame(block, index=df.index)
 
     def _strip_categoricals(self, df: pd.DataFrame) -> pd.DataFrame:
         df_out = df.copy()

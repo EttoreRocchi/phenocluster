@@ -18,6 +18,8 @@ phenotypes (introduced in v0.3.0). The subpackage exposes:
 - :func:`cluster_distribution`: phenotype prevalence helper.
 - :func:`chi2_cohort_comparison`: chi-square test on per-phenotype outcome
   counts between two cohorts (re-used by :class:`ExternalValidator`).
+- :func:`check_cohort_schema`: audit a validation cohort against the schema
+  the derivation model was fitted on (v0.4.0).
 """
 
 from ._types import CohortReport, GeneralizabilityReport
@@ -33,6 +35,7 @@ from .evaluator import GeneralizabilityEvaluator
 from .outcome_concordance import compare_outcomes, compare_survival, lin_ccc
 from .prevalence import chi2_cohort_comparison, cluster_distribution
 from .refit_validator import hungarian_alignment, refit_and_match
+from .schema_check import check_cohort_schema
 
 __all__ = [
     "GeneralizabilityEvaluator",
@@ -54,4 +57,5 @@ __all__ = [
     "reliability_curve",
     "cluster_distribution",
     "chi2_cohort_comparison",
+    "check_cohort_schema",
 ]

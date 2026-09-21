@@ -15,6 +15,12 @@ from .exceptions import (
     ModelNotFittedError,
     PhenoClusterError,
 )
+from .phenotype_order import (
+    PhenotypeOrderedModel,
+    is_identity,
+    size_order,
+    unwrap_model,
+)
 from .types import (
     DataSplitResult,
     ModelSelectionResult,
@@ -24,6 +30,11 @@ __all__ = [
     # Types
     "ModelSelectionResult",
     "DataSplitResult",
+    # Phenotype ordering
+    "PhenotypeOrderedModel",
+    "size_order",
+    "is_identity",
+    "unwrap_model",
     # Exceptions
     "PhenoClusterError",
     "ModelNotFittedError",

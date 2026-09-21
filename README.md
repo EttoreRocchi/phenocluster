@@ -29,6 +29,7 @@ The framework is **domain-agnostic** and can be applied to any clinical cohort s
 - **Survival analysis** with Cox proportional hazards models producing hazard ratios and log-rank tests
 - **Multistate modelling** with transition-specific Cox PH analysis, Monte Carlo simulation for state occupation probabilities with confidence interval bands, and clinical pathway enumeration
 - **Temporal and multi-site generalizability** (v0.3.0) - validate phenotypes across time windows or sites/centers (cutoff, sliding/expanding windows, leave-one-site-out), with apply-only or refit-and-match modes, calibration metrics (Brier, ECE), drift detection (PSI, KS, chi-square), and per-phenotype OR/HR concordance with FDR-corrected delta tests
+- **Validation cohort schema check** (v0.4.0) - every validation cohort is audited against the schema the derivation model was fitted on before its phenotypes are predicted: absent feature and outcome columns, entirely missing features, and category labels the encoder never saw, reported in the HTML report and the saved JSON
 - **Optional Streamlit dashboard** (v0.3.0) for interactive exploration of saved results: `phenocluster dashboard <results_dir>`
 - **Comprehensive output** including an interactive HTML report (toggleable via `generate_html_report` or `--no-html-report`), forest plots with confidence intervals, Kaplan-Meier and Nelson-Aalen curves, heatmaps, and JSON/CSV data exports
 
@@ -120,7 +121,7 @@ Results are written to the output directory (default: `results/`):
 | `results/multisite_validation_results.json` | Multi-site (LOGO / holdout) generalizability results (v0.3.0) |
 | `results/external_cohorts_results.json` | External-CSV generalizability results (v0.3.0) |
 | `results/generalizability_summary.json` | Aggregate ARI / PSI summary across cohorts plus `training_scope` flag (v0.3.0) |
-| `data/generalizability/` | Per-cohort `cluster_distribution_<label>.csv` and `drift_<label>.csv` (v0.3.0) |
+| `data/generalizability/` | Per-cohort `cluster_distribution_<label>.csv`, `drift_<label>.csv` and `phenotypes_<label>.csv` (per-patient assignments, v0.4.0) |
 | `phenocluster.log` | Pipeline execution log |
 | `artifacts/` | Cached intermediate results for incremental re-runs |
 

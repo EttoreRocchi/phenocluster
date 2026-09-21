@@ -16,6 +16,7 @@ from scipy.stats import norm
 from tqdm import tqdm
 
 from ..config import PhenoClusterConfig
+from ..core.phenotype_order import unwrap_model
 from ..utils.logging import get_logger
 
 
@@ -50,7 +51,7 @@ def _run_single_consensus_iteration(
 
     try:
         # Fit model on subsample with same parameters as original
-        model_sub = type(model)(
+        model_sub = type(unwrap_model(model))(
             n_components=model.n_components,
             measurement=model.measurement,
             random_state=seed,
@@ -160,7 +161,7 @@ def _run_single_cluster_stability_iteration(
     X_sub = X[indices]
 
     try:
-        model_sub = type(model)(
+        model_sub = type(unwrap_model(model))(
             n_components=model.n_components,
             measurement=model.measurement,
             random_state=seed,

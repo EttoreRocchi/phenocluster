@@ -201,3 +201,55 @@ class TestTrainingStage:
         meas = stage._build_measurement_dict(has_missing=False, n_continuous=2, n_categorical=0)
         assert meas["continuous"]["model"] == "continuous"
         assert "categorical" not in meas
+
+
+class TestEvaluationStageOrdering:
+    """The reordered phenotypes must survive into predictions on new cohorts.
+
+    The label array used to be renumbered by size while the fitted model kept
+    its own component order, so applying the model to a validation cohort
+    returned ids from a different label space than the derivation labels.
+    """
+
+    _cache: dict = {}
+
+    def _run_to_evaluation(self, tmp_path, seed):
+        from phenocluster.pipeline.stages.evaluation import EvaluationStage
+
+        if seed in self._cache:
+            return self._cache[seed]
+        model = {"n_clusters": 2, "stepmix": {"n_init": 2, "max_iter": 50}}
+        config = _config(tmp_path, model=model)
+        logger = _logger()
+        preprocessor = DataPreprocessor(config)
+        splitter = RandomSplitter(config.data_split)
+        ctx = PipelineContext(data_raw=_toy_dataframe(n=120, seed=seed))
+        preprocessing = PreprocessingStage(config, preprocessor, splitter, logger)
+        preprocessing.run(ctx)
+        TrainingStage(config, logger).run(ctx)
+        EvaluationStage(config, logger).run(ctx, preprocessing.split_result, None)
+        self._cache[seed] = ctx
+        return ctx
+
+    @pytest.mark.filterwarnings("ignore::UserWarning")
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3])
+    def test_predictions_stay_in_the_stored_label_space(self, tmp_path, seed):
+        ctx = self._run_to_evaluation(tmp_path, seed)
+        labels = np.asarray(ctx.labels)
+        assert np.array_equal(np.asarray(ctx.model.predict(ctx.X)), labels)
+        assert np.array_equal(np.asarray(ctx.model.predict_proba(ctx.X)).argmax(axis=1), labels)
+        sizes = np.bincount(labels, minlength=ctx.n_clusters)
+        assert sizes[0] == sizes.max()
+
+    @pytest.mark.filterwarnings("ignore::UserWarning")
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    def test_at_least_one_seed_exercises_the_reordering(self, tmp_path):
+        """Guards the guard: without a reordered seed the tests above prove nothing."""
+        from phenocluster.core.phenotype_order import PhenotypeOrderedModel
+
+        wrapped = [
+            isinstance(self._run_to_evaluation(tmp_path, seed).model, PhenotypeOrderedModel)
+            for seed in [0, 1, 2, 3]
+        ]
+        assert any(wrapped)

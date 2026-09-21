@@ -332,3 +332,55 @@ class TestCapConsensusSamples:
         X = np.zeros((10_500, 2))
         out = analyzer._cap_consensus_samples(X)
         assert out.shape[0] == 10_000
+
+
+class TestStabilityWithOrderedModel:
+    """Subsample models are rebuilt from the fitted model's class.
+
+    The final model is wrapped so its predictions use the size-ordered
+    phenotype ids, and rebuilding from the wrapper's class instead of the
+    estimator's used to make every subsampling run fail, which left the
+    consensus matrix empty and broke the downstream plot.
+    """
+
+    def _wrapped(self):
+        from phenocluster.core.phenotype_order import PhenotypeOrderedModel
+
+        return PhenotypeOrderedModel(_FakeModel(n_components=2), np.array([1, 0]))
+
+    def test_consensus_iteration_succeeds(self):
+        X = np.random.RandomState(0).randn(40, 3)
+        indices, labels, status = _run_single_consensus_iteration(
+            i=0,
+            X=X,
+            model=self._wrapped(),
+            n_samples=40,
+            subsample_size=30,
+            min_cluster_size=2,
+            random_state=42,
+            n_init=1,
+            max_iter=10,
+            abs_tol=1e-4,
+            rel_tol=1e-4,
+        )
+        assert status == "valid"
+        assert len(labels) == 30
+
+    def test_cluster_stability_iteration_succeeds(self):
+        X = np.random.RandomState(0).randn(40, 3)
+        result = _run_single_cluster_stability_iteration(
+            i=0,
+            X=X,
+            model=self._wrapped(),
+            original_labels=np.array([i % 2 for i in range(40)]),
+            n_samples=40,
+            subsample_size=30,
+            n_clusters=2,
+            min_cluster_size=2,
+            random_state=42,
+            n_init=1,
+            max_iter=10,
+            abs_tol=1e-4,
+            rel_tol=1e-4,
+        )
+        assert result is not None

@@ -18,6 +18,8 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
+from ...core.phenotype_order import unwrap_model
+
 
 def _build_padded_confusion(
     derivation_labels: np.ndarray,
@@ -78,6 +80,7 @@ def hungarian_alignment(
 
 def _build_refit_model(reference_model, n_components: int, random_state: int):
     """Construct a fresh estimator with the same hyperparameters as ``reference_model``."""
+    reference_model = unwrap_model(reference_model)
     cls = type(reference_model)
     if hasattr(reference_model, "get_params"):
         params = dict(reference_model.get_params(deep=False))

@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import adjusted_rand_score
 
+from ...core.phenotype_order import unwrap_model
 from ...data.preprocessor import DataPreprocessor
 from .refit_validator import hungarian_alignment
 
@@ -208,6 +209,7 @@ def _instantiate_stepmix_like(reference_model, n_components: int, random_state: 
     Falls back to a vanilla constructor if the reference does not expose
     ``get_params``.
     """
+    reference_model = unwrap_model(reference_model)
     cls = type(reference_model)
     if hasattr(reference_model, "get_params"):
         params = dict(reference_model.get_params(deep=False))

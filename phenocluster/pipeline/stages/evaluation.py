@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 
+from ...core.phenotype_order import PhenotypeOrderedModel, is_identity, size_order
 from ...data import DataPreprocessor
 from ...evaluation import ClusterEvaluator
 from ..context import PipelineContext
@@ -158,16 +159,15 @@ class EvaluationStage:
         proba = model.predict_proba(X)
 
         # Reorder phenotypes by size (largest = 0)
-        cluster_sizes = np.bincount(labels, minlength=n_clusters)
-        size_order = np.argsort(-cluster_sizes)
-        if not np.array_equal(size_order, np.arange(n_clusters)):
+        order = size_order(labels, n_clusters)
+        if not is_identity(order):
             self.logger.info("Reordering phenotypes by size (largest = Phenotype 0)...")
-            mapping_arr = np.empty(n_clusters, dtype=int)
-            for new, old in enumerate(size_order):
-                mapping_arr[old] = new
-            labels = mapping_arr[labels]
-            proba = proba[:, size_order]
-            self.logger.info(f"  Phenotype sizes: {[int(cluster_sizes[i]) for i in size_order]}")
+            model = PhenotypeOrderedModel(model, order)
+            ctx.model = model
+            labels = model.predict(X)
+            proba = model.predict_proba(X)
+            sizes = np.bincount(labels, minlength=n_clusters)
+            self.logger.info(f"  Phenotype sizes: {[int(s) for s in sizes]}")
 
         # Derive test labels from full-cohort predictions
         labels_test = labels[split_result.test_indices]

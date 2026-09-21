@@ -255,6 +255,7 @@ _BUCKET_FILES = {
 
 def _cohort_to_json_safe(cohort: dict) -> dict:
     out = dict(cohort)
+    out.pop("assignments", None)
     drift = out.get("drift")
     if isinstance(drift, pd.DataFrame):
         out["drift"] = drift.to_dict(orient="records")
@@ -300,6 +301,11 @@ def _write_cohort_csvs(cohorts: Iterable[dict], gen_data_dir: Path) -> None:
             if not target.is_relative_to(gen_data_dir):
                 continue
             pd.DataFrame(rows).to_csv(target, index=False)
+        assignments = cohort.get("assignments")
+        if isinstance(assignments, pd.DataFrame) and not assignments.empty:
+            assignment_target = (gen_data_dir / f"phenotypes_{label}.csv").resolve()
+            if assignment_target.is_relative_to(gen_data_dir):
+                assignments.to_csv(assignment_target, index=False)
         drift = cohort.get("drift")
         drift_target = (gen_data_dir / f"drift_{label}.csv").resolve()
         if not drift_target.is_relative_to(gen_data_dir):

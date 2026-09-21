@@ -20,6 +20,24 @@ from .calibration import compute_calibration_block
 from .drift import feature_drift
 from .outcome_concordance import compare_outcomes, compare_survival
 from .prevalence import chi2_homogeneity, cluster_distribution
+from .schema_check import check_cohort_schema
+
+
+def _assignment_table(
+    labels: np.ndarray,
+    proba: np.ndarray,
+    processed_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build the per-patient phenotype table for a validation cohort.
+
+    Mirrors the derivation cohort's ``data/phenotypes_data.csv``: the assigned
+    phenotype plus one posterior column per phenotype, indexed by the cohort
+    row order that survived preprocessing.
+    """
+    table = pd.DataFrame({"row_index": np.asarray(processed_df.index), "phenotype": labels})
+    for k in range(proba.shape[1]):
+        table[f"phenotype_prob_{k}"] = proba[:, k]
+    return table
 
 
 class GeneralizabilityEvaluator:
@@ -115,6 +133,17 @@ class GeneralizabilityEvaluator:
         """
         warnings: List[str] = []
 
+        schema = check_cohort_schema(
+            raw_df,
+            preprocessor=self.preprocessor,
+            continuous_columns=self.config.continuous_columns,
+            categorical_columns=self.config.categorical_columns,
+            outcome_columns=getattr(self.config, "outcome_columns", None),
+        )
+        for note in schema["warnings"]:
+            self.logger.warning(f"  cohort '{label}': {note}")
+        warnings.extend(schema["warnings"])
+
         applied = apply_to_cohort(
             raw_df,
             model=self.model,
@@ -137,8 +166,10 @@ class GeneralizabilityEvaluator:
             log_likelihood=applied["log_likelihood"],
             classification_quality=applied["classification_quality"],
             warnings=warnings,
+            schema_check=schema,
         )
         report.derivation_distribution = cluster_distribution(self.derivation_labels)
+        report.assignments = _assignment_table(labels, proba, processed_df)
 
         report.prevalence_chi2 = self._prevalence_chi2(
             report.derivation_distribution, report.cluster_distribution

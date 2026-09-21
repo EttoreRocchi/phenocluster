@@ -60,6 +60,15 @@ class CohortReport:
         prevalence between derivation and validation cohorts.
     warnings : list of str
         Per-cohort soft-warnings (e.g., refit skipped due to small cohort).
+    schema_check : dict, optional
+        Output of :func:`schema_check.check_cohort_schema`: feature and
+        outcome columns absent from the cohort, columns that are entirely
+        missing, and categorical labels the derivation encoder never saw.
+    assignments : pd.DataFrame, optional
+        One row per validation patient: the phenotype the derivation model
+        assigned and its posterior probability per phenotype. Written to
+        ``data/generalizability/phenotypes_<label>.csv`` and kept out of the
+        JSON, which stays at cohort level.
     fit_mode : str, optional
         Which model produced the metrics for this cohort: ``"per_split"``
         (a fresh derivation-only fit was used; default for in-CSV splits)
@@ -96,6 +105,8 @@ class CohortReport:
     refit: Optional[Dict[str, Any]] = None
     prevalence_chi2: Optional[Dict[str, Any]] = None
     warnings: List[str] = field(default_factory=list)
+    schema_check: Optional[Dict[str, Any]] = None
+    assignments: Optional[pd.DataFrame] = None
     fit_mode: Optional[str] = None
     derivation_only_ari: Optional[float] = None
     derivation_only_outcomes: Optional[Dict[str, Any]] = None
@@ -118,6 +129,8 @@ class CohortReport:
             "refit": self.refit,
             "prevalence_chi2": self.prevalence_chi2,
             "warnings": list(self.warnings),
+            "schema_check": self.schema_check,
+            "assignments": self.assignments,
             "fit_mode": self.fit_mode,
             "derivation_only_ari": self.derivation_only_ari,
             "derivation_only_outcomes": self.derivation_only_outcomes,
@@ -126,9 +139,14 @@ class CohortReport:
         }
 
     def to_json_safe(self) -> Dict[str, Any]:
-        """Return a JSON-serializable view (DataFrames -> list of records)."""
+        """Return a JSON-serializable view (DataFrames -> list of records).
+
+        The per-patient ``assignments`` table is dropped: it goes to its own
+        CSV so the JSON stays at cohort level.
+        """
         d = self.to_dict()
         d["drift"] = _df_to_records(self.drift)
+        d.pop("assignments", None)
         return d
 
 

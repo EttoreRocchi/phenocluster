@@ -182,8 +182,11 @@ Outputs
 - ``results/generalizability_summary.json`` - aggregate ARI / PSI per
   kind, plus ``training_scope`` flag and
   ``mean_derivation_only_ari_to_global``.
-- ``data/generalizability/cluster_distribution_<label>.csv`` and
-  ``data/generalizability/drift_<label>.csv`` per cohort.
+- ``data/generalizability/cluster_distribution_<label>.csv``,
+  ``data/generalizability/drift_<label>.csv`` and, from v0.4.0,
+  ``data/generalizability/phenotypes_<label>.csv`` (one row per
+  validation patient: assigned phenotype and posterior probability
+  per phenotype) per cohort.
 - New plots under ``plots/`` (cohort prevalence heatmaps, drift bar
   charts, OR concordance scatter, ARI forest).
 
@@ -198,6 +201,11 @@ Each cohort's JSON entry carries:
 - ``derivation_only_outcomes``: ORs computed against the
   derivation-only labels, fed into the cross-cohort outcome
   concordance comparison.
+- ``schema_check`` (v0.4.0): the audit of the cohort against the
+  derivation schema - ``missing_features``, ``missing_outcomes``,
+  ``all_missing_features`` and ``unseen_categories`` (per column: the
+  unseen labels, the number of affected rows and their share of the
+  cohort). The same findings are appended to ``warnings``.
 
 A new "Generalizability" section is appended to the static HTML
 report when generalizability results are present.
@@ -208,6 +216,13 @@ Pitfalls
 - **Refit instability** with very small validation cohorts: the
   ``min_validation_size_for_refit`` guardrail (default 100) skips
   refit and emits a warning rather than producing meaningless ARI/NMI.
+- **Cohort coding drift**: a validation cohort assembled from a
+  different export may code a variable differently (``Yes``/``No``
+  against ``1``/``0``, a grade that only exists in one cohort).
+  Unknown categories fall back to the modal one, so the model returns
+  plausible-looking phenotypes that ignore that variable. The schema
+  check reports the share of rows affected per column; treat anything
+  above a few percent as a harmonisation problem, not a finding.
 - **Time-column leakage**: do not include the time column itself
   among ``continuous_columns`` or ``categorical_columns``.
 - **Missing values in the partition column** (``time_column`` or
