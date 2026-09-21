@@ -78,13 +78,13 @@ Results are written to the output directory (default ``results/``):
      - Description
    * - ``analysis_report.html``
      - Comprehensive HTML report with all results and visualisations
-   * - ``cluster_statistics.json``
+   * - ``results/cluster_statistics.json``
      - Phenotype sizes, feature distributions, and classification quality
-   * - ``outcome_results.json``
+   * - ``results/outcome_results.json``
      - Odds ratios with confidence intervals and p-values
-   * - ``survival_results.json``
+   * - ``results/survival_results.json``
      - Kaplan-Meier estimates and Cox PH hazard ratios
-   * - ``multistate_results.json``
+   * - ``results/multistate_results.json``
      - Transition hazard ratios, pathways, and state occupation
    * - ``data/model_fit_metrics.csv``
      - Information criteria, entropy, and posterior probabilities
@@ -104,7 +104,7 @@ Results are written to the output directory (default ``results/``):
      - Train/test split details
    * - ``results/external_validation_results.json``
      - External validation results (when enabled)
-   * - ``phenocluster.log``
+   * - ``logs/phenocluster.log``
      - Pipeline execution log
    * - ``artifacts/``
      - Cached intermediate results for incremental re-runs

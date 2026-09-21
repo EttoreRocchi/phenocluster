@@ -34,4 +34,16 @@ From source
    pip install -e ".[dev]"
 
 This installs PhenoCluster in editable mode along with development dependencies
-(``pytest``, ``ruff``).
+(``pytest``, ``pytest-cov``, ``ruff``).
+
+Building the documentation
+--------------------------
+
+The documentation dependencies live in a separate ``docs`` extra:
+
+.. code-block:: bash
+
+   pip install -e ".[docs]"
+   sphinx-build docs/ docs/_build/html -W
+
+CI builds the same way, with ``-W`` turning any Sphinx warning into an error.

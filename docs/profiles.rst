@@ -66,8 +66,8 @@ Customising profiles
 --------------------
 
 The generated config file is a complete YAML that you can edit freely. The
-profile only sets the initial defaults --- you can override any parameter after
-generation. For example, to start from the ``complete`` profile but disable
+profile only sets the initial defaults, so you can override any parameter
+after generation. For example, to start from the ``complete`` profile but disable
 multistate modelling:
 
 .. code-block:: bash

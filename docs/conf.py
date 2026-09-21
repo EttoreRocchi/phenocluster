@@ -17,6 +17,8 @@ extensions = [
     "sphinx_click",
 ]
 
+smartquotes_action = "qe"
+
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 

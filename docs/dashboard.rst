@@ -32,7 +32,25 @@ Options:
 
 - ``--port`` (default ``8501``) - local port to bind.
 - ``--host`` (default ``127.0.0.1``) - host interface.
-- ``--browser`` / ``--headless`` - whether to auto-open a browser.
+- ``--headless`` / ``--browser`` - whether to auto-open a browser
+  (``--headless`` is the default).
+
+Sidebar controls
+----------------
+
+The sidebar settings apply across every tab, not per tab:
+
+- **Numeric precision** (2 to 6 decimals, default 3) and **plot height**
+  (300 to 1000 px, default 520).
+- **FDR threshold** (default 0.05) filters the Outcomes tab and the
+  cross-cohort concordance views.
+- **PSI threshold** (default 0.10) filters the drift bar charts in the
+  Generalizability and Drift explorer tabs.
+- **Highlight phenotypes** restricts tables and plots to the selected
+  phenotypes.
+- **Show cohort warnings** toggles the per-cohort warning panels, which
+  carry the v0.4.0 schema check findings.
+- **Reset settings** restores all of the above to their defaults.
 
 Tabs
 ----
@@ -52,9 +70,9 @@ per-phenotype classification quality.
 Outcomes
 ~~~~~~~~
 
-Per-phenotype odds ratios with confidence intervals. A slider filters
-to outcome-phenotype pairs whose FDR-adjusted p-value is below a
-chosen threshold.
+Per-phenotype odds ratios with confidence intervals, restricted to the
+outcome-phenotype pairs whose FDR-adjusted p-value is below the sidebar
+FDR threshold.
 
 Survival
 ~~~~~~~~
@@ -75,13 +93,15 @@ Generalizability
 Aggregate ARI / PSI summary, a per-cohort table (kind, label, sample
 size, log-likelihood, ARI, NMI, matched accuracy, mean PSI, max PSI),
 and a cohort-detail view with phenotype distribution, refit metrics,
-and a top-K drift table filtered by a PSI slider.
+cohort warnings, and a drift chart showing the features above the
+sidebar PSI threshold, capped by a local **Top features** slider.
 
 Drift explorer
 ~~~~~~~~~~~~~~
 
-Per-cohort drift table viewed in isolation, with a PSI threshold
-slider to focus on the most-shifted features.
+Per-cohort drift table viewed in isolation, with its own **Top
+features** slider and a feature-kind filter on top of the sidebar PSI
+threshold. The full table is available unfiltered in an expander.
 
 Notes
 -----

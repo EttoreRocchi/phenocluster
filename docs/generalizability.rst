@@ -130,7 +130,8 @@ and reports:
 
 - Pearson r and Spearman rho across phenotypes.
 - Lin's concordance correlation coefficient.
-- Sign agreement above a configurable absolute-effect floor.
+- Sign agreement above a configurable absolute-effect floor
+  (``outcome_concordance.effect_floor``, default 0.1 on the log scale).
 - Per-phenotype Wald delta test on
   ``log(OR)_d - log(OR)_v`` with pooled SE
   ``sqrt(SE_d^2 + SE_v^2)``, BH-FDR-corrected within the outcome
@@ -164,7 +165,7 @@ Configuration
        - { path: ./cohort_2024.csv, label: era_2024, kind: temporal }
      calibration:        { enabled: true, n_bins: 10, strategy: quantile }
      drift:              { enabled: true, n_bins: 10, top_k: 20 }
-     outcome_concordance: { enabled: true, fdr_method: bh, alpha: 0.05 }
+     outcome_concordance: { enabled: true, fdr_method: bh, alpha: 0.05, effect_floor: 0.1 }
 
 At least one of ``temporal``, ``multisite``, or ``external_cohorts``
 must be provided when ``enabled: true``; otherwise the stage raises a

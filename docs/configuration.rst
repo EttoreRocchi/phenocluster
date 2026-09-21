@@ -42,6 +42,33 @@ Project-level settings.
      - int
      - ``42``
      - Global random seed, automatically propagated to model selection, data splitting, and feature selection for full reproducibility
+
+.. warning::
+
+   The ``global`` block reads only the three keys above. Any other key placed
+   inside it is ignored without warning, so ``generate_html_report`` has to be
+   written at the top level of the file (see below).
+
+generate_html_report
+--------------------
+
+A top-level key, at the same indentation as ``global`` and ``data``:
+
+.. code-block:: yaml
+
+   global:
+     project_name: "My Study"
+
+   generate_html_report: false
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 10 15 50
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
    * - ``generate_html_report``
      - bool
      - ``true``
@@ -181,6 +208,10 @@ Missing data imputation for remaining missing values after row filtering.
      - int
      - ``10``
      - Maximum number of imputation rounds (iterative method only)
+   * - ``n_nearest_features``
+     - int | null
+     - ``null``
+     - Number of most-correlated features used to impute each column (iterative method only); ``null`` uses all features
 
 preprocessing.categorical_encoding
 -----------------------------------
@@ -328,7 +359,7 @@ Latent Class / Profile Analysis model parameters and automatic selection.
    * - ``selection.n_init``
      - list[int]
      - ``[100]``
-     - Number of random EM initialisations per cluster count to avoid local optima
+     - Number of random EM initialisations per cluster count to avoid local optima. Only the first element of the list is used; the list form is historical
    * - ``selection.n_jobs``
      - int
      - ``-1``
@@ -349,6 +380,10 @@ Latent Class / Profile Analysis model parameters and automatic selection.
      - float
      - ``1e-5``
      - Relative convergence tolerance for the EM log-likelihood
+   * - ``stepmix.n_init``
+     - int
+     - ``100``
+     - Initialisations used by the stability analysis. It also seeds ``selection.n_init`` when that key is absent from the config; the main fits always read ``selection.n_init``
 
 outcome
 -------
@@ -625,8 +660,8 @@ top-level toggles. Sub-blocks ``temporal``, ``multisite``,
      - Per-feature drift table (PSI, KS, chi-square).
    * - ``outcome_concordance``
      - object
-     - ``{enabled: true, fdr_method: "bh", alpha: 0.05}``
-     - Cross-cohort OR/HR concordance with FDR-corrected per-phenotype delta tests.
+     - ``{enabled: true, fdr_method: "bh", alpha: 0.05, effect_floor: 0.1}``
+     - Cross-cohort OR/HR concordance with FDR-corrected per-phenotype delta tests. ``effect_floor`` is the absolute log-effect below which a phenotype is left out of the sign-agreement count.
 
 cache
 -----
@@ -668,10 +703,6 @@ Plot output settings.
      - bool
      - ``true``
      - Save generated plots to the output directory
-   * - ``dpi``
-     - int
-     - ``300``
-     - Resolution in dots per inch for raster plot formats
 
 logging
 -------
@@ -739,7 +770,7 @@ Automated data quality assessment run before preprocessing.
    * - ``generate_report``
      - bool
      - ``true``
-     - Include a data quality summary section in the HTML report
+     - Write the standalone data quality figures to ``quality/``. The JSON report and the data quality section of the HTML report are produced either way
 
 categorical_flow
 ----------------

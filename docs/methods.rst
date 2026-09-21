@@ -7,7 +7,7 @@ Latent Class / Profile Analysis
 -------------------------------
 
 PhenoCluster uses the `StepMix <https://github.com/Labo-Lacourse/stepmix>`_
-framework for latent variable mixture modelling --- Latent Class Analysis (LCA)
+framework for latent variable mixture modelling: Latent Class Analysis (LCA)
 for categorical indicators, Latent Profile Analysis (LPA) for continuous
 indicators, or a mixed-indicator model when both types are present. Missing
 values are handled via Full Information Maximum Likelihood (FIML).
@@ -101,5 +101,5 @@ References
 - Morin, S., Legault, R., Laliberte, F., Bakk, Z., Giguere, C.-E.,
   de la Sablonniere, R., & Lacourse, E. (2025). StepMix: A Python Package for
   Pseudo-Likelihood Estimation of Generalized Mixture Models with External
-  Variables. *Journal of Statistical Software*, 113(8), 1--39.
+  Variables. *Journal of Statistical Software*, 113(8), 1-39.
   https://doi.org/10.18637/jss.v113.i08
