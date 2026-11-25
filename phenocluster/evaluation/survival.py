@@ -6,8 +6,6 @@ Survival analysis with Kaplan-Meier/Nelson-Aalen descriptive curves
 and Cox proportional hazards models for phenotype comparison.
 """
 
-import contextlib
-import io
 from typing import Dict
 
 import numpy as np
@@ -375,89 +373,203 @@ def _fit_km_for_cluster(cluster_data, time_col, event_col, cluster_id):
     }
 
 
-def _grambsch_therneau_global(cph, cox_df, time_col, transform="log"):
-    """Global Schoenfeld-residual test of the proportional hazards assumption.
+def _weight_at_or_after(values, weights, points):
+    """Total weight of ``values`` greater than or equal to each point."""
+    order = np.argsort(values, kind="stable")
+    tail = np.append(np.cumsum(weights[order][::-1])[::-1], 0.0)
+    return tail[np.searchsorted(values[order], points, side="left")]
 
-    Computes
 
-    .. math:: T = G^T I^{-1} G \\,/\\, \\sum_k (g_k - \\bar g)^2
+def _km_time_transform(durations, events, weights=None, entries=None):
+    """Kaplan-Meier time transform for Schoenfeld-residual PH tests.
 
-    distributed approximately as :math:`\\chi^2_p` under the null, where
+    Returns one minus the left-continuous Kaplan-Meier estimate,
+    :math:`1 - \\hat S(t^-)`, for every duration, as in the ``"km"``
+    transform of ``survival::cox.zph``. Tied event times share the same
+    value. With ``entries`` the estimate accounts for delayed entry: a
+    subject is at risk at time ``u`` when ``entry < u <= duration``. The
+    signature matches the callables accepted by
+    ``lifelines.statistics.proportional_hazard_test``.
+
+    Parameters
+    ----------
+    durations : array-like
+        Follow-up times of all subjects.
+    events : array-like
+        Event indicators aligned with ``durations``.
+    weights : array-like, optional
+        Case weights aligned with ``durations``; unit weights if omitted.
+    entries : array-like, optional
+        Delayed-entry times aligned with ``durations``; no delayed entry if
+        omitted.
+
+    Returns
+    -------
+    pd.Series
+        Transformed times aligned with ``durations``, carrying its index
+        when ``durations`` is a Series.
+    """
+    index = durations.index if isinstance(durations, pd.Series) else None
+    t = np.asarray(durations, dtype=float)
+    e = np.asarray(events, dtype=bool)
+    w = np.ones_like(t) if weights is None else np.asarray(weights, dtype=float)
+
+    event_times, inverse = np.unique(t[e], return_inverse=True)
+    if event_times.size == 0:
+        return pd.Series(np.zeros_like(t), index=index)
+    deaths = np.bincount(inverse, weights=w[e], minlength=event_times.size)
+    at_risk = _weight_at_or_after(t, w, event_times)
+    if entries is not None:
+        at_risk = at_risk - _weight_at_or_after(np.asarray(entries, dtype=float), w, event_times)
+    hazard = np.divide(deaths, at_risk, out=np.zeros_like(deaths), where=at_risk > 0)
+    surv_after = np.cumprod(1.0 - hazard)
+
+    n_before = np.searchsorted(event_times, t, side="left")
+    surv_before = np.where(n_before > 0, surv_after[np.maximum(n_before - 1, 0)], 1.0)
+    return pd.Series(1.0 - surv_before, index=index)
+
+
+def _schoenfeld_residuals(cph, df, duration_col, event_col, entry_col=None):
+    """Raw Schoenfeld residuals of a fitted Cox model, allowing delayed entry.
+
+    lifelines does not compute residuals for models fitted with an entry
+    column. Here a subject is at risk at event time ``u`` when
+    ``entry < u <= duration``, and tied events use the Efron approximation:
+    each tied event receives :math:`x_j - \\bar x`, where :math:`\\bar x` is the
+    average of the Efron-weighted covariate means over the tied events, as
+    in ``survival::residuals.coxph``. Case weights are not supported.
+
+    Parameters
+    ----------
+    cph : CoxPHFitter
+        Fitted lifelines Cox model; its ``params_`` index names the
+        covariate columns of ``df``.
+    df : pd.DataFrame
+        The dataframe used to fit ``cph``.
+    duration_col : str
+        Name of the duration column.
+    event_col : str
+        Name of the event indicator column.
+    entry_col : str, optional
+        Name of the delayed-entry column; no delayed entry if omitted.
+
+    Returns
+    -------
+    tuple of np.ndarray
+        ``(residuals, event_times)``: an ``(n_events, n_covariates)`` array
+        ordered by event time and the matching event times.
+    """
+    covariates = list(cph.params_.index)
+    X = df[covariates].to_numpy(dtype=float)
+    t = df[duration_col].to_numpy(dtype=float)
+    e = df[event_col].to_numpy(dtype=bool)
+    entry = df[entry_col].to_numpy(dtype=float) if entry_col else np.full_like(t, -np.inf)
+    risk = np.exp((X - X.mean(axis=0)) @ cph.params_.to_numpy(dtype=float))
+
+    residuals, times = [], []
+    for u in np.unique(t[e]):
+        at_risk = (entry < u) & (t >= u)
+        dead = e & (t == u)
+        m = int(dead.sum())
+        s0, s1 = risk[at_risk].sum(), risk[at_risk] @ X[at_risk]
+        d0, d1 = risk[dead].sum(), risk[dead] @ X[dead]
+        fractions = np.arange(m) / m
+        means = (s1[None, :] - fractions[:, None] * d1[None, :]) / (s0 - fractions * d0)[:, None]
+        residuals.append(X[dead] - means.mean(axis=0))
+        times.append(np.full(m, u))
+    if not residuals:
+        return np.empty((0, len(covariates))), np.empty(0)
+    return np.vstack(residuals), np.concatenate(times)
+
+
+def _schoenfeld_ph_tests(cph, df, duration_col, event_col, entry_col=None):
+    """Per-covariate and global Schoenfeld PH tests with the KM transform.
+
+    Both statistics are computed from :func:`_schoenfeld_residuals` and the
+    Kaplan-Meier transform of :func:`_km_time_transform`, accounting for
+    delayed entry when ``entry_col`` is given. With
     :math:`G_j = \\sum_k (g_k - \\bar g)\\, s_{kj}` for raw Schoenfeld
-    residuals :math:`s_{kj}`, :math:`g_k` is the time transform of the k-th
-    event time, and :math:`I` is the Cox information matrix on the original
-    (un-normalised) scale.
+    residuals :math:`s_{kj}`, :math:`g_k` the transformed k-th event time,
+    :math:`d` the number of events, and :math:`V = I^{-1}` the model-based
+    variance matrix of ``cph`` on the original covariate scale (also when
+    standard errors are robust), the per-covariate statistic is
+
+    .. math:: T_j = d\\,(GV)_j^2 \\,/\\, \\big(V_{jj} \\sum_k (g_k - \\bar g)^2\\big)
+
+    on one degree of freedom, and the global statistic of Grambsch and
+    Therneau (1994) is
+
+    .. math:: T = d\\,G^T V G \\,/\\, \\sum_k (g_k - \\bar g)^2
+
+    on ``n_covariates`` degrees of freedom, as in ``survival::cox.zph``
+    before version 3.0. The statistics do not depend on the scale of the
+    covariates.
 
     Parameters
     ----------
     cph : CoxPHFitter
         Fitted lifelines Cox model.
-    cox_df : pd.DataFrame
-        The dataframe used to fit ``cph``; must contain ``time_col``.
-    time_col : str
-        Name of the duration column in ``cox_df``.
-    transform : {"log", "identity", "rank"}, default "log"
-        Time transform applied to event times before the test.
+    df : pd.DataFrame
+        The dataframe used to fit ``cph``.
+    duration_col : str
+        Name of the duration column.
+    event_col : str
+        Name of the event indicator column.
+    entry_col : str, optional
+        Name of the delayed-entry column; no delayed entry if omitted.
 
     Returns
     -------
     dict or None
-        ``{"test_statistic", "df", "p_value", "transform"}``. Returns
-        ``None`` when the test cannot be evaluated (no events, singular
-        information matrix, or zero variance in the time transform).
+        ``{"per_covariate": [{"covariate", "test_statistic", "p_value"}],
+        "global_test": {"test_statistic", "df", "p_value", "transform"}}``,
+        or ``None`` when the tests cannot be evaluated.
     """
-    schoenfeld = cph.compute_residuals(cox_df, kind="scaled_schoenfeld")
-    d, p = schoenfeld.shape
+    residuals, times = _schoenfeld_residuals(cph, df, duration_col, event_col, entry_col)
+    d, p = residuals.shape
     if d == 0 or p == 0:
         return None
 
-    event_times = cox_df.loc[schoenfeld.index, time_col].to_numpy(dtype=float)
-
-    if transform == "log":
-        valid = event_times > 0
-        if not valid.all():
-            event_times = event_times[valid]
-            schoenfeld = schoenfeld.iloc[np.where(valid)[0]]
-            d = schoenfeld.shape[0]
-            if d == 0:
-                return None
-        g = np.log(event_times)
-    elif transform in ("identity", None):
-        g = event_times
-    elif transform == "rank":
-        g = stats.rankdata(event_times, method="average")
-    else:
-        raise ValueError(f"unknown transform '{transform}'")
-
+    e = df[event_col].to_numpy(dtype=bool)
+    entries = df[entry_col] if entry_col else None
+    km = _km_time_transform(df[duration_col], e, entries=entries).to_numpy(dtype=float)
+    km_at_event = dict(zip(df[duration_col].to_numpy(dtype=float)[e], km[e]))
+    g = np.array([km_at_event[u] for u in times])
     g_centred = g - g.mean()
     scalar = float(np.sum(g_centred**2))
     if scalar <= 0:
         return None
 
-    r = schoenfeld.values
-    Gs = (g_centred[:, None] * r).sum(axis=0)
-
-    norm_std = cph._norm_std.values
-    V_orig = cph.variance_matrix_.values * np.outer(norm_std, norm_std)
-    try:
-        I_orig = np.linalg.inv(V_orig)
-    except np.linalg.LinAlgError:
-        I_orig = np.linalg.pinv(V_orig)
-
-    T_global = float((Gs @ I_orig @ Gs) / (scalar * d))
-    p_value = float(stats.chi2.sf(T_global, df=p))
+    G = g_centred @ residuals
+    # lifelines reports variance_matrix_ on the original covariate scale, the
+    # same scale as the residuals; rescaling it by the normalisation std would
+    # inflate the statistics by roughly 1/std**2 per covariate.
+    V = cph.variance_matrix_.to_numpy(dtype=float)
+    per_cov = d * (G @ V) ** 2 / (np.diag(V) * scalar)
+    T_global = float(d * (G @ V @ G) / scalar)
+    if not (np.isfinite(T_global) and np.all(np.isfinite(per_cov))):
+        return None
     return {
-        "test_statistic": T_global,
-        "df": int(p),
-        "p_value": p_value,
-        "transform": transform,
+        "per_covariate": [
+            {"covariate": str(c), "test_statistic": float(s), "p_value": float(stats.chi2.sf(s, 1))}
+            for c, s in zip(cph.params_.index, per_cov)
+        ],
+        "global_test": {
+            "test_statistic": T_global,
+            "df": int(p),
+            "p_value": float(stats.chi2.sf(T_global, df=p)),
+            "transform": "km",
+        },
     }
 
 
 def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logger):
-    """Check PH assumption using lifelines' Schoenfeld-residual test."""
-    from lifelines.statistics import proportional_hazard_test
+    """Check PH assumption with Schoenfeld-residual tests.
 
+    The per-covariate tests and the global Grambsch-Therneau test come from
+    :func:`_schoenfeld_ph_tests`, the same implementation used for the
+    multistate transition models.
+    """
     logger.info("  Checking proportional hazards assumption...")
     ph = {"tested": False, "violations": [], "summary": ""}
     try:
@@ -471,33 +583,19 @@ def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logg
         cph.fit(cox_df, duration_col=time_col, event_col=event_col, show_progress=False)
 
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                test_results = proportional_hazard_test(cph, cox_df, time_transform="rank")
-        except Exception:
-            test_results = None
-
-        try:
-            global_test = _grambsch_therneau_global(cph, cox_df, time_col=time_col, transform="log")
+            tests = _schoenfeld_ph_tests(cph, cox_df, time_col, event_col)
         except Exception as e:
-            logger.debug(f"  Global Grambsch-Therneau computation failed: {e}")
-            global_test = None
+            logger.debug(f"  Schoenfeld PH tests failed: {e}")
+            tests = None
 
         ph["tested"] = True
-        if test_results is not None and hasattr(test_results, "summary"):
-            summary = test_results.summary
-            covariates = list(summary.index)
-            raw_p = [float(summary.loc[c, "p"]) for c in covariates]
-            test_statistics = [float(summary.loc[c, "test_statistic"]) for c in covariates]
-
-            ph["per_covariate"] = [
-                {"covariate": cov, "test_statistic": ts, "p_value": p}
-                for cov, ts, p in zip(covariates, test_statistics, raw_p)
-            ]
-
+        if tests is not None:
+            ph["per_covariate"] = tests["per_covariate"]
+            global_test = tests["global_test"]
             ph["global_test"] = global_test
-            global_stat = global_test["test_statistic"] if global_test else None
-            global_df = global_test["df"] if global_test else None
-            global_p = global_test["p_value"] if global_test else None
+            global_stat = global_test["test_statistic"]
+            global_df = global_test["df"]
+            global_p = global_test["p_value"]
 
             for entry in ph["per_covariate"]:
                 if entry["p_value"] < 0.05:
@@ -513,7 +611,7 @@ def _check_proportional_hazards(data, time_col, event_col, n_clusters, ref, logg
                         f"(raw p={entry['p_value']:.4f})"
                     )
 
-            if global_p is not None and global_p < 0.05:
+            if global_p < 0.05:
                 ph["summary"] = (
                     f"Global Schoenfeld test rejects PH "
                     f"(chi2={global_stat:.2f}, df={global_df}, p={global_p:.4f})."

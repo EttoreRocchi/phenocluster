@@ -1,5 +1,7 @@
 """Tests for survival analysis -- edge cases and guard conditions."""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -33,6 +35,21 @@ def _make_survival_data(n=50, n_events=None, seed=42):
     phenotypes = np.array([i % 2 for i in range(n)])
     df = pd.DataFrame({"time": times, "event": events, "phenotype": phenotypes})
     return df
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def two_covariate_data():
+    """40 subjects, binary x1 and continuous x2, no delayed entry."""
+    return pd.read_csv(FIXTURES / "schoenfeld_two_covariates.csv")
+
+
+@pytest.fixture
+def delayed_entry_data():
+    """40 subjects with delayed entry (start, stop] and tied event times."""
+    return pd.read_csv(FIXTURES / "schoenfeld_delayed_entry.csv")
 
 
 class TestCoxEventsGuard:
@@ -203,38 +220,162 @@ class TestPHCheck:
         ph = analyzer._check_ph(df, "time", "event")
         assert ph is None or isinstance(ph, dict)
 
+    def test_per_covariate_and_global_share_km_transform(self, two_covariate_data):
+        import logging
 
-class TestGrambschTherneauGlobal:
-    """Spot-check the global Schoenfeld-residual PH test against lifelines."""
+        from phenocluster.evaluation.survival import _check_proportional_hazards
 
-    def test_matches_lifelines_single_covariate(self):
+        ref = two_covariate_data
+        df = pd.DataFrame({"t": ref["t"], "e": ref["e"], "phenotype": ref["x1"].astype(int)})
+        ph = _check_proportional_hazards(df, "t", "e", 2, 0, logging.getLogger("test"))
+        assert ph["tested"]
+        assert len(ph["per_covariate"]) == 1
+        assert ph["global_test"]["transform"] == "km"
+        # With a single covariate the global and per-covariate statistics
+        # coincide only when both tests use the same time transform.
+        assert np.isclose(
+            ph["global_test"]["test_statistic"],
+            ph["per_covariate"][0]["test_statistic"],
+            rtol=1e-8,
+        )
+
+
+class TestKMTimeTransform:
+    def test_left_continuous_with_ties_and_censoring(self):
+        from phenocluster.evaluation.survival import _km_time_transform
+
+        out = _km_time_transform(pd.Series([1.0, 2.0, 2.0, 3.0, 4.0]), pd.Series([1, 1, 1, 0, 1]))
+        assert isinstance(out, pd.Series)
+        np.testing.assert_allclose(out.to_numpy(), [0.0, 0.2, 0.2, 0.6, 0.6])
+
+    def test_weights(self):
+        from phenocluster.evaluation.survival import _km_time_transform
+
+        out = _km_time_transform(
+            [1.0, 2.0, 2.0, 3.0, 4.0], [1, 1, 1, 0, 1], weights=[2.0, 1.0, 1.0, 1.0, 1.0]
+        )
+        np.testing.assert_allclose(out.to_numpy(), [0.0, 1 / 3, 1 / 3, 2 / 3, 2 / 3])
+
+    def test_delayed_entry(self):
+        from phenocluster.evaluation.survival import _km_time_transform
+
+        durations, events = [2.0, 3.0, 4.0], [1, 1, 1]
+        without = _km_time_transform(durations, events)
+        with_entry = _km_time_transform(durations, events, entries=[0.0, 1.0, 2.5])
+        np.testing.assert_allclose(without.to_numpy(), [0.0, 1 / 3, 2 / 3])
+        np.testing.assert_allclose(with_entry.to_numpy(), [0.0, 0.5, 0.75])
+
+
+class TestSchoenfeldPHTests:
+    """Schoenfeld PH tests checked against R and lifelines."""
+
+    @staticmethod
+    def _fit(df, **kwargs):
         from lifelines import CoxPHFitter
+
+        cph = CoxPHFitter()
+        cph.fit(df, show_progress=False, **kwargs)
+        return cph
+
+    def test_matches_r_reference_two_covariates(self, two_covariate_data):
+        """Reference: survival::cox.zph before version 3.0 recomputed in R
+        (survival 3.8.12) from the coxph Schoenfeld residuals of the same
+        data, Efron ties, Kaplan-Meier transform."""
+        from phenocluster.evaluation.survival import _schoenfeld_ph_tests
+
+        df = two_covariate_data
+        cph = self._fit(df, duration_col="t", event_col="e")
+        tests = _schoenfeld_ph_tests(cph, df, "t", "e")
+        np.testing.assert_allclose(
+            [c["test_statistic"] for c in tests["per_covariate"]], [9.261274, 0.011564], rtol=1e-4
+        )
+        assert tests["global_test"]["df"] == 2
+        assert np.isclose(tests["global_test"]["test_statistic"], 9.342859, rtol=1e-4)
+        assert tests["global_test"]["transform"] == "km"
+
+    def test_matches_r_reference_with_delayed_entry(self, delayed_entry_data):
+        """Reference: as above on Surv(start, stop, event) ~ x + cluster(id),
+        with model-based variance and left-truncated Kaplan-Meier."""
+        from phenocluster.evaluation.survival import _schoenfeld_ph_tests
+
+        df = delayed_entry_data
+        cph = self._fit(
+            df, duration_col="stop", event_col="event", entry_col="start", cluster_col="id"
+        )
+        tests = _schoenfeld_ph_tests(cph, df, "stop", "event", entry_col="start")
+        assert np.isclose(tests["per_covariate"][0]["test_statistic"], 2.629771, rtol=1e-4)
+        assert np.isclose(tests["global_test"]["test_statistic"], 2.629771, rtol=1e-4)
+
+    def test_matches_lifelines_without_entry(self, two_covariate_data):
         from lifelines.statistics import proportional_hazard_test
 
-        from phenocluster.evaluation.survival import _grambsch_therneau_global
+        from phenocluster.evaluation.survival import (
+            _km_time_transform,
+            _schoenfeld_ph_tests,
+            _schoenfeld_residuals,
+        )
 
-        rng = np.random.default_rng(0)
-        n = 800
-        x = rng.normal(size=n)
-        times = -np.log(rng.uniform(size=n)) / np.exp(0.5 * x) + 0.5
-        events = (rng.uniform(size=n) < 0.7).astype(int)
+        df = two_covariate_data
+        cph = self._fit(df, duration_col="t", event_col="e")
+
+        residuals, _ = _schoenfeld_residuals(cph, df, "t", "e")
+        lifelines_residuals = cph.compute_residuals(df, kind="schoenfeld").to_numpy()
+        np.testing.assert_allclose(residuals, lifelines_residuals, atol=1e-10)
+
+        tests = _schoenfeld_ph_tests(cph, df, "t", "e")
+        lif = proportional_hazard_test(cph, df, time_transform=_km_time_transform)
+        np.testing.assert_allclose(
+            [c["test_statistic"] for c in tests["per_covariate"]],
+            lif.summary["test_statistic"].to_numpy(),
+            rtol=1e-8,
+        )
+
+    def test_binary_covariate_global_matches_lifelines(self):
+        """With one covariate the global statistic equals the per-covariate
+        one; a binary covariate (std far from 1) exposes any rescaling of the
+        variance matrix."""
+        from lifelines.statistics import proportional_hazard_test
+
+        from phenocluster.evaluation.survival import _km_time_transform, _schoenfeld_ph_tests
+
+        rng = np.random.default_rng(1)
+        n = 600
+        x = (rng.uniform(size=n) < 0.3).astype(float)
+        times = rng.weibull(np.where(x == 1, 0.6, 1.6))
+        events = (rng.uniform(size=n) < 0.8).astype(int)
         df = pd.DataFrame({"t": times, "e": events, "x": x})
-        cph = CoxPHFitter()
-        cph.fit(df, duration_col="t", event_col="e", show_progress=False)
+        cph = self._fit(df, duration_col="t", event_col="e")
 
-        lif = proportional_hazard_test(cph, df, time_transform="log")
-        gt = _grambsch_therneau_global(cph, df, time_col="t", transform="log")
-        assert gt is not None
+        tests = _schoenfeld_ph_tests(cph, df, "t", "e")
+        lif = proportional_hazard_test(cph, df, time_transform=_km_time_transform)
         assert np.isclose(
-            gt["test_statistic"],
+            tests["global_test"]["test_statistic"],
             lif.summary["test_statistic"].iloc[0],
-            rtol=5e-3,
+            rtol=1e-8,
+        )
+
+    def test_invariant_to_covariate_scale(self, two_covariate_data):
+        from phenocluster.evaluation.survival import _schoenfeld_ph_tests
+
+        df = two_covariate_data
+        rescaled = df.assign(x1=df["x1"] * 10.0, x2=df["x2"] * 0.01)
+        results = []
+        for frame in (df, rescaled):
+            cph = self._fit(frame, duration_col="t", event_col="e")
+            results.append(_schoenfeld_ph_tests(cph, frame, "t", "e"))
+        assert np.isclose(
+            results[0]["global_test"]["test_statistic"],
+            results[1]["global_test"]["test_statistic"],
+            rtol=1e-6,
+        )
+        np.testing.assert_allclose(
+            [c["test_statistic"] for c in results[0]["per_covariate"]],
+            [c["test_statistic"] for c in results[1]["per_covariate"]],
+            rtol=1e-6,
         )
 
     def test_handles_zero_event_times(self):
-        from lifelines import CoxPHFitter
-
-        from phenocluster.evaluation.survival import _grambsch_therneau_global
+        from phenocluster.evaluation.survival import _schoenfeld_ph_tests
 
         df = pd.DataFrame(
             {
@@ -243,9 +384,8 @@ class TestGrambschTherneauGlobal:
                 "x": [0.1, -0.2, 0.3, -0.4, 0.5, -0.1, 0.7, -0.8, 0.9, -0.3],
             }
         )
-        cph = CoxPHFitter()
-        cph.fit(df, duration_col="t", event_col="e", show_progress=False)
-        gt = _grambsch_therneau_global(cph, df, time_col="t", transform="log")
-        assert gt is not None
-        assert np.isfinite(gt["test_statistic"])
-        assert 0.0 <= gt["p_value"] <= 1.0
+        cph = self._fit(df, duration_col="t", event_col="e")
+        tests = _schoenfeld_ph_tests(cph, df, "t", "e")
+        assert tests is not None
+        assert np.isfinite(tests["global_test"]["test_statistic"])
+        assert 0.0 <= tests["global_test"]["p_value"] <= 1.0

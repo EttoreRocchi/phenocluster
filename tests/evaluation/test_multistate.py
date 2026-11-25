@@ -254,3 +254,67 @@ class TestPrepareTransitionData:
         """Empty trajectory list produces empty DataFrame."""
         df = self._prepare([])
         assert len(df) == 0
+
+
+class _CapturingLogger:
+    def __init__(self):
+        self.warnings = []
+        self.debugs = []
+
+    def warning(self, msg):
+        self.warnings.append(msg)
+
+    def debug(self, msg):
+        self.debugs.append(msg)
+
+
+def _transition_df(seed, violate, n=300):
+    rng = np.random.default_rng(seed)
+    x = (rng.uniform(size=n) < 0.5).astype(float)
+    entry = np.where(rng.uniform(size=n) < 0.3, rng.uniform(0, 1, size=n), 0.0)
+    if violate:
+        gap = rng.weibull(np.where(x == 1, 0.5, 2.0))
+    else:
+        gap = rng.exponential(1 / np.exp(0.7 * x))
+    return pd.DataFrame(
+        {
+            "sample_id": np.arange(n),
+            "time_entry_to_origin": entry,
+            "time_transition_to_target": entry + gap + 1e-6,
+            "target_state": (rng.uniform(size=n) < 0.8).astype(int),
+            "x": x,
+        }
+    )
+
+
+class TestPHAssumptionCheck:
+    """The PH diagnostic must run on models fitted with delayed entry."""
+
+    def _check(self, df):
+        from lifelines import CoxPHFitter
+
+        from phenocluster.evaluation.multistate.transition_hazards import _check_ph_assumption
+
+        cox = CoxPHFitter()
+        cox.fit(
+            df,
+            duration_col="time_transition_to_target",
+            event_col="target_state",
+            entry_col="time_entry_to_origin",
+            cluster_col="sample_id",
+            show_progress=False,
+        )
+        logger = _CapturingLogger()
+        _check_ph_assumption(cox, df, 1, 2, logger)
+        return logger
+
+    def test_flags_non_proportional_hazards(self):
+        logger = self._check(_transition_df(seed=3, violate=True))
+        assert logger.debugs == []
+        assert len(logger.warnings) == 1
+        assert "global Schoenfeld test" in logger.warnings[0]
+
+    def test_silent_under_proportional_hazards(self):
+        logger = self._check(_transition_df(seed=4, violate=False))
+        assert logger.debugs == []
+        assert logger.warnings == []

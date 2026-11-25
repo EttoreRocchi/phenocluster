@@ -8,7 +8,7 @@ Author: Ettore Rocchi <ettore.rocchi3@unibo.it>
 License: MIT
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 

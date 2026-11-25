@@ -51,7 +51,11 @@ family), yielding odds ratios with Wald confidence intervals and p-values.
 **Survival models** use Cox proportional hazards regression (lifelines
 CoxPHFitter), yielding hazard ratios with confidence intervals and Wald
 p-values. Log-rank tests assess overall and pairwise survival differences
-between phenotypes.
+between phenotypes. The proportional hazards assumption is checked with
+Schoenfeld-residual tests: a per-covariate test for each phenotype indicator,
+reported with raw p-values, and the global Grambsch-Therneau test, which
+determines whether a violation is flagged. Both use the Kaplan-Meier time
+transform, the default of R's ``survival::cox.zph``.
 
 **Binary outcome associations** are additionally tested with chi-square or
 Fisher's exact tests (auto-selected based on expected cell counts).
@@ -69,7 +73,11 @@ Multistate modelling
 
 Transition-specific Cox PH models are fitted per transition using Cox proportional hazards
 (`lifelines <https://lifelines.readthedocs.io/>`_). Proportional hazards
-assumptions are checked using Schoenfeld residuals.
+assumptions are checked with the same Schoenfeld-residual tests used for the
+survival models (per-covariate and global, Kaplan-Meier time transform). Since
+patients enter each origin state at different times, the residuals and the
+Kaplan-Meier transform account for delayed entry; a warning is logged when the
+global test rejects proportionality.
 
 Cox PH models produce hazard ratios with confidence intervals and Wald p-values
 for each transition, with FDR correction applied across all transitions.

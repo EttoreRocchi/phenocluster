@@ -1,7 +1,5 @@
 """Transition-specific hazard models using lifelines CoxPHFitter."""
 
-import contextlib
-import io
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -10,6 +8,7 @@ from joblib import Parallel, delayed
 from lifelines import CoxPHFitter
 from scipy.interpolate import interp1d
 
+from ..survival import _schoenfeld_ph_tests
 from .types import MIN_TRANSITION_TIME, RIGHT_CENSORING, PatientTrajectory
 
 
@@ -25,19 +24,49 @@ def _stepfunc(x: np.ndarray, y: np.ndarray) -> interp1d:
 
 
 def _check_ph_assumption(cox, event_df, origin, target, logger):
-    """Check proportional hazards assumption (diagnostic only)."""
+    """Check proportional hazards assumption (diagnostic only).
+
+    Uses the same tests as the survival analysis: raw per-covariate
+    Schoenfeld tests and the global Grambsch-Therneau test, both with the
+    Kaplan-Meier time transform, computed by
+    :func:`~phenocluster.evaluation.survival._schoenfeld_ph_tests` so that
+    delayed entry into the origin state is respected (lifelines does not
+    compute residuals for models with an entry column). The global test
+    decides whether a violation is reported; per-covariate p < 0.05 alone
+    are reported as exploratory.
+    """
+    if logger is None:
+        return
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            ph_test = cox.check_assumptions(event_df, p_value_threshold=0.05)
-        if ph_test is not None and len(ph_test) > 0:
-            if logger:
-                violated_covs = [c for c, _ in ph_test]
-                logger.warning(
-                    f"PH assumption may be violated for "
-                    f"origin={origin}->target={target}: {violated_covs}"
-                )
-    except Exception:
-        pass
+        tests = _schoenfeld_ph_tests(
+            cox,
+            event_df,
+            duration_col="time_transition_to_target",
+            event_col="target_state",
+            entry_col="time_entry_to_origin",
+        )
+    except Exception as e:
+        logger.debug(f"PH check skipped for origin={origin}->target={target}: {e}")
+        return
+    if tests is None:
+        logger.debug(f"PH check not evaluable for origin={origin}->target={target}")
+        return
+
+    global_test = tests["global_test"]
+    flagged = [c["covariate"] for c in tests["per_covariate"] if c["p_value"] < 0.05]
+    if global_test["p_value"] < 0.05:
+        logger.warning(
+            f"PH assumption may be violated for origin={origin}->target={target}: "
+            f"global Schoenfeld test chi2={global_test['test_statistic']:.2f}, "
+            f"df={global_test['df']}, p={global_test['p_value']:.4f}"
+            + (f"; raw per-covariate p<0.05 for {flagged}" if flagged else "")
+        )
+    elif flagged:
+        logger.warning(
+            f"Global PH test not rejected for origin={origin}->target={target}, but raw "
+            f"per-covariate Schoenfeld p<0.05 for {flagged} "
+            "(exploratory; not multiplicity-adjusted)."
+        )
 
 
 def _prepare_transition_data(
